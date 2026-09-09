@@ -11,7 +11,19 @@
         <div style="margin-bottom: 2rem;">
             <label for="file" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">Select CAD File</label>
             <input type="file" id="file" name="file" required style="padding: 0.5rem; width: 100%;">
-            <small style="color: #666;">Supported: STEP, IGES, Creo (.prt, .asm), SolidWorks, FreeCAD, STL (Max 50MB)</small>
+            <small style="color: #666;" id="formatNote">Supported: STEP, IGES, Creo (.prt, .asm), SolidWorks, FreeCAD, STL (Max 50MB)</small>
+        </div>
+
+        <div style="margin-bottom: 2rem;">
+            <label for="process_type" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">Manufacturing Process</label>
+            <select id="process_type" name="process_type">
+                <option value="general">General</option>
+                <option value="cnc_machining">CNC machining</option>
+                <option value="injection_molding">Injection moulding</option>
+                <option value="sheet_metal">Sheet metal</option>
+                <option value="3d_printing">3D printing</option>
+            </select>
+            <small style="color: #666;">Sets the limits used by the DFM checks.</small>
         </div>
         
         <div style="background: #f7fafc; padding: 1.5rem; border-radius: 5px; margin-bottom: 2rem;">
@@ -42,6 +54,11 @@
                 <label>
                     <input type="number" name="insertion_depth_mm" value="0" min="0" max="500">
                     Insertion Depth (mm)
+                </label>
+
+                <label>
+                    <input type="number" name="density_g_cm3" value="7.85" min="0.1" max="25" step="0.01">
+                    Material Density (g/cm3)
                 </label>
             </div>
             
@@ -98,6 +115,7 @@
 <div id="resultContainer" style="display: none;">
     <div class="card">
         <h2>Analysis Results</h2>
+        <div id="scoreGrid" class="score-grid"></div>
         <pre id="resultText" style="background: #f5f5f5; padding: 1.5rem; border-radius: 5px; overflow-x: auto; font-size: 0.85rem; line-height: 1.4;"></pre>
         
         <div style="margin-top: 1.5rem;">
@@ -145,6 +163,7 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             currentFilename = data.filename;
             currentReportFilename = data.report_filename;
             
+            renderScores(data.scores);
             document.getElementById('resultText').textContent = data.report;
             document.getElementById('loadingIndicator').style.display = 'none';
             document.getElementById('resultContainer').style.display = 'block';
@@ -157,6 +176,39 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
         location.reload();
     }
 });
+
+function renderScores(scores) {
+    const grid = document.getElementById('scoreGrid');
+    grid.innerHTML = '';
+    if (!scores) {
+        return;
+    }
+    const tiles = [
+        ['Composite DFX', scores.composite],
+        ['DFA - Assembly', scores.dfa],
+        ['DFM - Manufacture', scores.dfm],
+        ['DFI - Inspection', scores.dfi],
+        ['DFS - Service', scores.dfs]
+    ];
+    tiles.forEach(([label, value]) => {
+        const tile = document.createElement('div');
+        let band = 'poor';
+        if (value === null || value === undefined) {
+            band = '';
+        } else if (value >= 8) {
+            band = 'good';
+        } else if (value >= 6) {
+            band = 'fair';
+        }
+        tile.className = 'score-tile ' + band;
+        const shown = (value === null || value === undefined)
+            ? 'n/a' : value.toFixed(1) + '/10';
+        tile.innerHTML = '<div class="label"></div><div class="value"></div>';
+        tile.querySelector('.label').textContent = label;
+        tile.querySelector('.value').textContent = shown;
+        grid.appendChild(tile);
+    });
+}
 
 function downloadReport() {
     window.location.href = `/api/download/${currentReportFilename}`;

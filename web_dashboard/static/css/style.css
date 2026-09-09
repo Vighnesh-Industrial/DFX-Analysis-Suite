@@ -1,0 +1,49 @@
+/* Additional styles for the DFX dashboard.
+   The base layout lives in templates/base.html. */
+
+.score-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.score-tile {
+    background: #f7fafc;
+    border-left: 4px solid #667eea;
+    border-radius: 5px;
+    padding: 1rem;
+}
+
+.score-tile .label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #4a5568;
+}
+
+.score-tile .value {
+    font-size: 1.6rem;
+    font-weight: bold;
+    color: #2d3748;
+}
+
+.score-tile.good { border-left-color: #48bb78; }
+.score-tile.fair { border-left-color: #ed8936; }
+.score-tile.poor { border-left-color: #f56565; }
+
+.field-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+}
+
+.field-row label { font-size: 0.9rem; }
+
+.field-row input[type="number"],
+select {
+    width: 100%;
+    padding: 0.4rem;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+}

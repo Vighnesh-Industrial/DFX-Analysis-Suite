@@ -27,16 +27,22 @@ python scripts/convert_creo_to_step.py input.prt -o output.STEP
 ```
 
 **Requirements:**
-- Creo installed on the system
-- Creo Python integration enabled
+- Creo Parametric installed on the same machine
 
-### Method 3: Command-Line Batch Conversion
+If Creo is not found the script does not fail silently - it prints the exact
+manual export steps instead. There is no way to read a `.prt` file without
+PTC's software.
 
-For multiple Creo files:
+### Method 3: Batch analysis after exporting
+
+Export the parts to STEP first, then analyse the whole folder at once:
 
 ```bash
-python scripts/batch_analysis.py --input-dir ./creo_parts --output-dir ./reports
+python scripts/batch_analysis.py --input-dir ./exported_step --output-dir ./reports
 ```
+
+Running the batch over a folder of raw `.prt` files produces a report per file
+explaining that the format cannot be measured - it does not skip them silently.
 
 ## Upload Creo Files to Web Dashboard
 

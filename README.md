@@ -1,388 +1,245 @@
-# DFX Analysis Suite 🏭
+# DFX Analysis Suite
 
-**Comprehensive Design for Excellence (DFX) Analysis Tool** for CAD components and assemblies.
+Automated **Design for Excellence** analysis for CAD parts:
 
-Perform automated analysis for:
-- **DFA** (Design for Assembly)
-- **DFM** (Design for Manufacturability)
-- **DFI** (Design for Inspection)
-- **DFS** (Design for Serviceability)
+| Discipline | What it covers | Driven by |
+|---|---|---|
+| **DFM** | Design for Manufacturability | Geometry measured from the CAD file |
+| **DFI** | Design for Inspection | Geometry measured from the CAD file |
+| **DFA** | Design for Assembly | Parameters you supply |
+| **DFS** | Design for Serviceability | Your parameters, sharpened by measured mass and size |
 
----
-
-## 📋 Features
-
-✅ **Multi-format CAD Support**
-- STEP (.step, .stp)
-- IGES (.iges, .igs)
-- Creo Parts (.prt, .asm)
-- SolidWorks (.sldprt, .sldasm)
-- FreeCAD (.FCStd)
-- STL (.stl)
-
-✅ **Comprehensive Analysis**
-- Individual component scoring (0-10 scale)
-- Assembly-level analysis
-- Violation & warning detection
-- Actionable recommendations
-
-✅ **Multiple Output Formats**
-- Text Reports (.txt)
-- JSON (.json) for integration
-- CSV (.csv) for Excel
-- PDF (.pdf) with charts
-
-✅ **Interactive Web Dashboard**
-- Upload CAD files
-- Real-time analysis
-- Visual score cards
-- Export reports
-
----
-
-## 🚀 Quick Start
-
-### Installation
+The analysis core has **no third-party dependencies**. If you have Python, you
+can run it right now:
 
 ```bash
-# Clone repository
-git clone https://github.com/Vighnesh-Industrial/DFX-Analysis-Suite.git
-cd DFX-Analysis-Suite
-
-# Install dependencies
-pip install -r requirements.txt
-
-# For Creo/SolidWorks support (optional)
-pip install pyassimp  # 3D file parsing
+python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 ```
 
-### Basic Usage
+---
+
+## Quick start
+
+### Windows
+
+Double-click, in this order:
+
+1. **`setup.bat`** - creates the virtual environment and installs the web
+   dependencies. It uses `python -m pip` throughout and never depends on
+   `activate`, so it does not hit the usual *"pip is not recognized"* problem.
+2. **`run_analysis.bat`** - analyses the sample bracket and writes
+   `DFX_Report.txt`. Pass your own file to analyse it instead:
+   `run_analysis.bat "C:\path\to\part.step"`
+3. **`run_dashboard.bat`** - starts the web dashboard on
+   <http://localhost:5000>.
+
+`run_analysis.bat` works even if `setup.bat` has not been run, because the
+command-line analysis needs no installed packages.
+
+### macOS / Linux
+
+```bash
+./setup.sh                                          # optional: only the dashboard needs it
+python3 analyze.py example_parts/sample_bracket.STEP
+.venv/bin/python web_dashboard/app.py               # dashboard on http://localhost:5000
+```
+
+---
+
+## What the tool actually measures
+
+Being precise about this matters: a DFX report that invents numbers is worse
+than no report.
+
+### Read directly from the file
+
+| Format | Extensions | What is extracted |
+|---|---|---|
+| **STEP** | `.step`, `.stp` | Bounding box, units, product name, B-rep face and solid counts, cylindrical / conical / toroidal surface radii |
+| **STL** | `.stl` (ASCII + binary) | Exact volume, surface area, bounding box, triangle count, watertightness |
+
+The STEP reader is validated against OpenCASCADE: on the sample bracket it
+reports the same 24 faces, 13 planes and 10 cylindrical radii that the kernel
+does, and the STL volume matches the exact solid volume to within 0.01%.
+
+### Accepted but **not** measurable
+
+`.prt`, `.asm`, `.sldprt`, `.sldasm`, `.iges`, `.igs`, `.fcstd`
+
+These are closed vendor formats. Uploading one produces a report that says so
+and tells you to export STEP - it does **not** silently return an empty
+analysis. Export from your CAD system with **File > Save As > STEP (AP203 or
+AP214)**; see [`docs/CREO_INTEGRATION.md`](docs/CREO_INTEGRATION.md).
+
+### Answered by you, not by the file
+
+Assembly and serviceability questions - symmetry in the installed position,
+fastener count, tool clearance, insertion motion - cannot be read from a
+single part file. The report labels these clearly so the two kinds of finding
+are never confused.
+
+---
+
+## Command line
+
+```bash
+python analyze.py PART.step [options]
+
+  --process {general,cnc_machining,injection_molding,sheet_metal,3d_printing}
+  --name NAME             component name for the report
+  --params FILE.json      DFA/DFS answers (see examples/dfx_params_template.json)
+  --output REPORT.txt     write the text report
+  --json RESULTS.json     write machine-readable results
+  --quiet                 do not print to the screen
+```
+
+Batch a whole folder:
+
+```bash
+python scripts/batch_analysis.py --input-dir example_parts --process cnc_machining
+```
+
+This writes one report per file plus `batch_summary.json` and
+`batch_summary.csv` for Excel.
+
+---
+
+## Python API
 
 ```python
 from dfx_analyzers import ComprehensiveDFXAnalyzer
 
-# Initialize analyzer
-analyzer = ComprehensiveDFXAnalyzer("path/to/your/component.STEP")
+analyzer = ComprehensiveDFXAnalyzer('part.STEP', process_type='cnc_machining')
 
-# Run all analyses
-report = analyzer.generate_master_report(dfa_params={
+print(analyzer.geometry.summary_lines())   # what was measured
+print(analyzer.generate_master_report({    # full text report
     'num_parts': 1,
     'is_symmetric': True,
     'num_fasteners': 2,
-    # ... other parameters
-})
+    'tool_clearance_mm': 18,
+}))
 
-print(report)
+analyzer.scores()    # {'dfa': .., 'dfm': .., 'dfi': .., 'dfs': .., 'composite': ..}
+analyzer.to_dict()   # JSON-serialisable results
 ```
 
----
-
-## 📤 Supported Input Formats
-
-| Format | Extension | Creo Support | Note |
-|--------|-----------|-------------|------|
-| STEP | `.step`, `.stp` | ✅ Yes | **Recommended** - Universal CAD format |
-| IGES | `.iges`, `.igs` | ✅ Yes | Older but compatible |
-| Creo Part | `.prt` | ✅ Yes | Native Creo format (requires conversion) |
-| Creo Assembly | `.asm` | ✅ Yes | Full assembly analysis |
-| SolidWorks | `.sldprt`, `.sldasm` | ⚠️ Via STEP | Export to STEP first |
-| FreeCAD | `.FCStd` | ✅ Yes | Direct support |
-| STL/Mesh | `.stl` | ✅ Yes | For 3D printed parts |
-
-### ⚠️ Important: Creo Parts Upload
-
-**Creo native files (.prt, .asm) should be converted to STEP/IGES format for best compatibility:**
-
-```bash
-# Option 1: Export from Creo
-# In Creo: File → Export → Select STEP format → Save
-
-# Option 2: Use provided conversion script
-python scripts/convert_creo_to_step.py input.prt output.STEP
-```
-
----
-
-## 📊 Analysis Outputs
-
-### Example Output Structure
-
-```
-DFX_Report_20240909_143522/
-├── DFX_Master_Report.txt          # Complete text report
-├── DFX_Analysis.json              # Structured data
-├── DFX_Analysis.csv               # Excel-compatible
-├── DFX_Report.pdf                 # Formatted PDF
-├── component_scores.json          # Individual component scores
-└── recommendations.txt            # Priority action items
-```
-
-### Score Ratings
-
-| Score | Rating | Status |
-|-------|--------|--------|
-| 9-10 | ⭐⭐⭐ EXCELLENT | Ready for production |
-| 7-8.9 | ⭐⭐ GOOD | Minor improvements |
-| 5-6.9 | ⭐ FAIR | Needs attention |
-| <5 | ⚠️ POOR | Critical issues |
-
----
-
-## 🎯 DFX Analysis Breakdown
-
-### DFA (Design for Assembly)
-**Input:** Component parameters (symmetry, fasteners, handling, tool access)
-**Output:** DFA Score (0-10), individual metrics, assembly recommendations
-
-### DFM (Design for Manufacturability)
-**Input:** CAD file + manufacturing process (injection molding, CNC, sheet metal, etc.)
-**Output:** Violations, warnings, manufacturability score, cost estimates
-
-### DFI (Design for Inspection)
-**Input:** CAD file geometry
-**Output:** Datum surface accessibility, probe clearance, measurement feasibility
-
-### DFS (Design for Serviceability)
-**Input:** Assembly structure + component list
-**Output:** Modularity score, disassembly complexity, maintenance accessibility
-
----
-
-## 💻 Web Dashboard Usage
-
-### Start the Dashboard
-
-```bash
-cd web_dashboard
-python app.py
-
-# Access at: http://localhost:5000
-```
-
-### Upload CAD File
-
-1. Navigate to `http://localhost:5000`
-2. Click "Upload CAD File"
-3. Select your STEP/IGES/CREO file (max 50MB)
-4. Click "Analyze"
-5. View results in real-time
-6. Download reports
-
----
-
-## 📁 Repository Structure
-
-```
-DFX-Analysis-Suite/
-├── README.md                          # This file
-├── requirements.txt                   # Python dependencies
-├── LICENSE                            # MIT License
-├── setup.py                          # Installation script
-│
-├── dfx_analyzers/
-│   ├── __init__.py
-│   ├── dfa_analyzer.py               # Design for Assembly
-│   ├── dfm_analyzer.py               # Design for Manufacturability
-│   ├── dfi_analyzer.py               # Design for Inspection
-│   ├── dfs_analyzer.py               # Design for Serviceability
-│   ├── master_analyzer.py            # Master orchestrator
-│   └── utils/
-│       ├── cad_parser.py             # CAD file parsing
-│       ├── report_generator.py       # Report creation
-│       └── data_models.py            # Data structures
-│
-├── scripts/
-│   ├── convert_creo_to_step.py      # Creo conversion utility
-│   ├── batch_analysis.py            # Analyze multiple files
-│   └── cli_tool.py                  # Command-line interface
-│
-├── web_dashboard/
-│   ├── app.py                       # Flask application
-│   ├── config.py                    # Configuration
-│   ├── templates/
-│   │   ├── index.html              # Upload page
-│   │   ├── analysis.html           # Results page
-│   │   └── base.html               # Base template
-│   ├── static/
-│   │   ├── css/
-│   │   ├── js/
-│   │   └── images/
-│   └── uploads/                    # Temporary file storage
-│
-├── examples/
-│   ├── sample_component.STEP       # Example STEP file
-│   ├── sample_assembly.STEP        # Example assembly
-│   ├── dfx_params_template.json    # DFA parameter template
-│   └── sample_output/
-│       ├── DFX_Report_sample.txt
-│       ├── DFX_Analysis_sample.json
-│       └── DFX_Analysis_sample.csv
-│
-├── tests/
-│   ├── test_dfa.py
-│   ├── test_dfm.py
-│   ├── test_dfi.py
-│   ├── test_dfs.py
-│   └── test_integration.py
-│
-└── docs/
-    ├── INSTALLATION.md              # Detailed setup guide
-    ├── CAD_FORMAT_SUPPORT.md       # Supported formats
-    ├── CREO_INTEGRATION.md         # Creo-specific guide
-    ├── API_REFERENCE.md            # API documentation
-    └── EXAMPLES.md                 # Usage examples
-```
-
----
-
-## 🔧 Installation Modes
-
-### Mode 1: Python Script (Command-line)
-```bash
-pip install -r requirements.txt
-python -c "from dfx_analyzers import ComprehensiveDFXAnalyzer; ..."
-```
-
-### Mode 2: Web Dashboard
-```bash
-pip install -r requirements_web.txt
-cd web_dashboard
-python app.py
-```
-
-### Mode 3: Docker
-```bash
-docker build -t dfx-suite .
-docker run -p 5000:5000 dfx-suite
-```
-
----
-
-## 📝 Usage Examples
-
-### Example 1: Quick DFA Analysis
+Just the geometry:
 
 ```python
-from dfx_analyzers import DFAAnalyzer
+from dfx_analyzers import read_cad
 
-dfa = DFAAnalyzer("Bracket")
-report = dfa.generate_dfa_report(
-    num_parts=1,
-    is_symmetric=True,
-    num_fasteners=2,
-    tool_clearance_mm=18
-)
-print(report)
+geom = read_cad('part.STEP')
+geom.dimensions                 # (80.0, 63.0, 25.0) mm
+geom.cylindrical_diameters      # [1.5, 6.5, 10.0, 16.0, 20.0]
+geom.volume_mm3                 # exact for STL, None for STEP
+geom.estimated_mass_g(2.70)     # None when volume is unknown - never guessed
 ```
 
-### Example 2: Full CAD Analysis
+---
 
-```python
-from dfx_analyzers import ComprehensiveDFXAnalyzer
+## Scoring
 
-analyzer = ComprehensiveDFXAnalyzer("housing.STEP")
-master_report = analyzer.generate_master_report(
-    component_params={
-        'num_parts': 1,
-        'is_symmetric': True,
-        # ... DFA params
-    }
-)
-print(master_report)
+Each discipline scores out of 10, and the composite is their mean.
+
+* **DFA** - weighted average of seven assembly factors (part reduction,
+  symmetry, fasteners, handling, insertion, tool access, error-proofing).
+* **DFM / DFI** - start at 10 and lose **1.5** per violation or critical
+  finding and **0.4** per warning.
+* **DFS** - starts at 10 and loses points for fastener count, tight tool
+  clearance, handling mass and low modularity.
+
+A score built from fewer checks is flagged as such: analysing a mesh instead
+of a STEP file raises a *Tessellated source* warning, because a mesh carries no
+feature data and therefore cannot fail the hole, fillet or draft checks.
+
+---
+
+## Example output
+
+```
+DFM ANALYSIS REPORT (CNC MACHINING)
+
+VIOLATIONS (1):
+
+  [FAIL] Sample_Bracket - Small cylindrical feature: 1.50 mm diameter
+         Required: >= 2.00 mm
+         Action:   A 1.50 mm feature needs a fragile small-diameter tool and a
+                   slow peck cycle. Open it up to 2.00 mm, or call it out as a
+                   drilled pilot with a separate operation.
+
+DFI ANALYSIS REPORT
+
+CRITICAL (1):
+
+  [CRIT] Sample_Bracket - Probe cannot enter
+         Feature diameters 1.50 mm are smaller than the 5.0 mm standard touch probe.
+         Action:   These features cannot be measured on a CMM. Either enlarge them,
+                   accept an optical or pin-gauge check, or mark them as
+                   reference-only on the drawing.
 ```
 
-### Example 3: Batch Analysis
+Report text is plain ASCII on purpose, so it survives a Windows console and a
+`cp1252` file handle.
+
+---
+
+## Project layout
+
+```
+analyze.py                  Command-line entry point (no dependencies)
+setup.bat / setup.sh        One-time environment setup
+run_analysis.bat            Analyse a part on Windows
+run_dashboard.bat           Start the dashboard on Windows
+dfx_analyzers/
+  cad_reader.py             STEP and STL geometry extraction
+  dfm_analyzer.py           Manufacturability checks
+  dfi_analyzer.py           Inspection checks
+  dfa_analyzer.py           Assembly scoring
+  dfs_analyzer.py           Serviceability scoring
+  master_analyzer.py        Runs everything, builds the report
+web_dashboard/              Flask upload dashboard
+scripts/
+  batch_analysis.py         Analyse a folder of parts
+  convert_creo_to_step.py   Creo export helper
+  generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
+example_parts/              Sample bracket, STEP + STL
+tests/                      53 tests
+docs/                       Installation, Creo integration, examples
+```
+
+---
+
+## Tests
 
 ```bash
-python scripts/batch_analysis.py --input-dir ./parts --process injection_molding
+python -m unittest discover -s tests     # no dependencies needed
+.venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
----
-
-## 🎯 Creo Parts - Complete Guide
-
-### Converting Creo Files to STEP
-
-**Method 1: Using Creo GUI**
-1. Open `.prt` or `.asm` file in Creo
-2. File → Export → Select "STEP" format
-3. Click "Save"
-
-**Method 2: Using Python Script**
-```bash
-python scripts/convert_creo_to_step.py input.prt output.STEP
-```
-
-**Method 3: Direct Upload to Dashboard**
-- Dashboard automatically detects Creo format
-- Converts and analyzes in background
-- Results available in minutes
-
-### Assembly Analysis
-
-For Creo assemblies (`.asm`):
-```python
-analyzer = ComprehensiveDFXAnalyzer("assembly.asm")
-# Automatically detects assembly
-# Analyzes all components
-# Provides assembly-level DFA/DFS scores
-```
+53 tests. The 12 web-dashboard tests skip automatically when Flask is not
+installed.
 
 ---
 
-## 📊 Output Report Example
+## Requirements
 
-```
-╔═══════════════════════════════════════════════════════════════════╗
-║                    MASTER DFX ANALYSIS REPORT                    ║
-║                   Electronic Housing Assembly                     ║
-║                    2024-09-09 14:35:22                            ║
-╚═══════════════════════════════════════════════════════════════════╝
-
-Overall DFX Score: 6.8/10
-├─ DFA Score: 7.8/10 (GOOD) ⭐⭐
-├─ DFM Score: 6.2/10 (NEEDS IMPROVEMENT) ⭐
-├─ DFI Score: 5.8/10 (FAIR) ⭐
-└─ DFS Score: 7.5/10 (GOOD) ⭐⭐
-
-PRIORITY ACTIONS:
-1. 🔴 Increase wall thickness (DFM violation)
-2. 🟡 Add 3rd datum surface (DFI critical)
-3. 🟡 Add draft angles (DFM violation)
-```
+* **Python 3.8+** - that is all the analysis needs.
+* `requirements.txt` - Flask, Flask-Cors, Werkzeug, for the dashboard only.
+* `requirements-dev.txt` - pytest, and CadQuery for regenerating the samples.
 
 ---
 
-## 📞 Support
+## Roadmap
 
-### Documentation
-- See `/docs` folder for detailed guides
-- CAD format support: `docs/CAD_FORMAT_SUPPORT.md`
-- Creo integration: `docs/CREO_INTEGRATION.md`
+Honest list of what is *not* implemented yet:
 
-### Issues & Questions
-- GitHub Issues: [Report Bug](https://github.com/Vighnesh-Industrial/DFX-Analysis-Suite/issues)
-- Discussions: [Ask Question](https://github.com/Vighnesh-Industrial/DFX-Analysis-Suite/discussions)
+* True wall-thickness measurement (needs a solid-modelling kernel).
+* Draft-angle measurement against a stated pull direction.
+* Assembly-level DFA from `.asm` structure.
+* PDF report export.
 
 ---
 
-## 📄 License
+## License
 
-MIT License - See LICENSE file for details
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/NewAnalysis`)
-3. Commit changes (`git commit -m 'Add new DFX metric'`)
-4. Push to branch (`git push origin feature/NewAnalysis`)
-5. Open Pull Request
-
----
-
-**Last Updated:** 2024-09-09  
-**Version:** 1.0.0  
-**Status:** ✅ Production Ready
+MIT - see [LICENSE](LICENSE).

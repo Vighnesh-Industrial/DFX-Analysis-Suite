@@ -1,28 +1,36 @@
-"""Main JavaScript for DFX Dashboard"""
+// Main JavaScript for the DFX Analysis Suite dashboard.
 
-// API health check
 async function checkHealth() {
     try {
         const response = await fetch('/api/health');
-        const data = await response.json();
-        console.log('API Health:', data);
+        console.log('API health:', await response.json());
     } catch (error) {
         console.error('Health check failed:', error);
     }
 }
 
-// Load supported formats
+// Show which of the accepted formats can actually be measured, so nobody
+// uploads a Creo .prt expecting geometry checks to run.
 async function loadFormats() {
+    const target = document.getElementById('formatNote');
+    if (!target) {
+        return;
+    }
     try {
         const response = await fetch('/api/formats');
-        const formats = await response.json();
-        console.log('Supported Formats:', formats);
+        const data = await response.json();
+        const measurable = data.formats.filter(f => f.measurable)
+            .map(f => f.extension).join(', ');
+        const other = data.formats.filter(f => !f.measurable)
+            .map(f => f.extension).join(', ');
+        target.textContent =
+            'Geometry is measured from: ' + measurable +
+            '. Accepted but not measurable without export: ' + other + '.';
     } catch (error) {
         console.error('Failed to load formats:', error);
     }
 }
 
-// Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     checkHealth();
     loadFormats();

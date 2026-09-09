@@ -1,5 +1,25 @@
 # Usage Examples - DFX Analysis Suite
 
+## Example 0: Read the geometry only
+
+```python
+from dfx_analyzers import read_cad
+
+geom = read_cad('example_parts/sample_bracket.STEP')
+
+print(geom.dimensions)              # (80.0, 63.0, 25.0) millimetres
+print(geom.cylindrical_diameters)   # [1.5, 6.5, 10.0, 16.0, 20.0]
+print(geom.face_count, geom.solid_count)
+print('\n'.join(geom.summary_lines()))
+```
+
+Fields that cannot be measured come back as `None`, never as a guess:
+
+```python
+geom.volume_mm3          # exact for STL, None for STEP
+geom.estimated_mass_g()  # None when the volume is unknown
+```
+
 ## Example 1: Quick DFA Analysis
 
 ```python
@@ -27,7 +47,8 @@ print(report)
 from dfx_analyzers import ComprehensiveDFXAnalyzer
 
 # Initialize with CAD file
-analyzer = ComprehensiveDFXAnalyzer("housing_assembly.STEP")
+analyzer = ComprehensiveDFXAnalyzer("housing_assembly.STEP",
+                                    process_type='cnc_machining')
 
 # Define component parameters
 params = {
@@ -53,8 +74,9 @@ params = {
 # Generate master report
 master_report = analyzer.generate_master_report(params)
 
-# Save to file
-with open('DFX_Analysis_Report.txt', 'w') as f:
+# Save to file. Always pass encoding='utf-8': the Windows default is
+# cp1252 and will raise UnicodeEncodeError on some characters.
+with open('DFX_Analysis_Report.txt', 'w', encoding='utf-8') as f:
     f.write(master_report)
 
 print(master_report)
@@ -112,8 +134,9 @@ print(dfm_report)
 ## Example 6: Creo File Analysis
 
 ```bash
-# Convert Creo file to STEP
-python scripts/convert_creo_to_step.py my_part.prt my_part.STEP
+# Export the Creo file to STEP (needs Creo installed; otherwise the script
+# prints the manual File > Save As steps)
+python scripts/convert_creo_to_step.py my_part.prt -o my_part.STEP
 
 # Then analyze
 python -c "
@@ -168,4 +191,32 @@ for analysis_type, report in results.items():
     print(f"{analysis_type.upper()}")
     print(f"{'='*60}")
     print(report)
+```
+
+## Example 8: Command-line entry point
+
+```bash
+# Text report on screen
+python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
+
+# Save both a text report and machine-readable results
+python analyze.py part.step --output report.txt --json results.json --quiet
+
+# Supply the DFA/DFS answers from a file
+python analyze.py part.step --params examples/dfx_params_template.json
+```
+
+## Example 9: Scores as data
+
+```python
+from dfx_analyzers import ComprehensiveDFXAnalyzer
+
+analyzer = ComprehensiveDFXAnalyzer('part.STEP', process_type='injection_molding')
+analyzer.generate_master_report({'num_parts': 1, 'num_fasteners': 4})
+
+scores = analyzer.scores()
+print(scores['composite'], scores['dfm_violations'], scores['dfi_critical'])
+
+for violation in analyzer.dfm_analyzer.violations:
+    print(violation['Type'], violation['Value'], '->', violation['Recommendation'])
 ```

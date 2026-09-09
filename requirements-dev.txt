@@ -1,0 +1,10 @@
+# Development-only requirements.
+-r requirements.txt
+
+# Test runner (the tests also run under `python -m unittest`).
+pytest>=7.4.0
+
+# Only needed to regenerate example_parts/ via scripts/generate_sample_parts.py.
+# The generated sample files are committed, so you do not need this to use
+# or test the suite.
+cadquery>=2.4

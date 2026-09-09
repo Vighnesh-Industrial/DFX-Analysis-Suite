@@ -126,31 +126,43 @@ class DFAAnalyzer:
     def generate_dfa_report(self, **params):
         """Generate detailed DFA report"""
         overall_score, scores = self.calculate_dfa_score(**params)
-        
-        report = f"""
-╔════════════════════════════════════════════════════════════════╗
-║         DFA ANALYSIS REPORT - {self.component}                 ║
-╚════════════════════════════════════════════════════════════════╝
+        rule = "=" * 74
 
-Overall DFA Score: {overall_score:.1f}/10
+        report = "\n%s\nDFA ANALYSIS REPORT - %s\nDesign for Assembly\n%s\n" % (
+            rule, self.component, rule)
+        report += "\nOverall DFA Score: %.1f/10   (%s)\n" % (
+            overall_score, self._get_rating(overall_score))
+        report += "\nIndividual scores (weighted):\n"
 
-Individual Scores:
-┌─────────────────────────────────────────────────────────────┐
-│ Part Reduction:      {scores['part_reduction']:>5.1f}/10   ({self.weight['part_reduction']*100:.0f}% weight) │
-│ Symmetry:            {scores['symmetry']:>5.1f}/10   ({self.weight['symmetry']*100:.0f}% weight) │
-│ Fastener Design:     {scores['fasteners']:>5.1f}/10   ({self.weight['fasteners']*100:.0f}% weight) │
-│ Handling:            {scores['handling']:>5.1f}/10   ({self.weight['handling']*100:.0f}% weight) │
-│ Insertion Motion:    {scores['insertion']:>5.1f}/10   ({self.weight['insertion']*100:.0f}% weight) │
-│ Tool Access:         {scores['tool_access']:>5.1f}/10   ({self.weight['tool_access']*100:.0f}% weight) │
-│ Error-Proofing:      {scores['error_proofing']:>5.1f}/10   ({self.weight['error_proofing']*100:.0f}% weight) │
-└─────────────────────────────────────────────────────────────┘
+        labels = [
+            ('part_reduction', 'Part reduction'),
+            ('symmetry', 'Symmetry'),
+            ('fasteners', 'Fastener design'),
+            ('handling', 'Handling'),
+            ('insertion', 'Insertion motion'),
+            ('tool_access', 'Tool access'),
+            ('error_proofing', 'Error-proofing'),
+        ]
+        for key, label in labels:
+            report += "  %-18s %5.1f/10   (%2.0f%% weight)   %s\n" % (
+                label + ':', scores[key], self.weight[key] * 100,
+                self._bar(scores[key]))
 
-Rating: {self._get_rating(overall_score)}
-"""
+        report += ("\nNote: DFA scores come from the parameters supplied, not "
+                   "from the CAD file.\n      Answer them for the part in its "
+                   "installed position for a meaningful score.\n")
         return report
-    
+
+    @staticmethod
+    def _bar(score, width=10):
+        filled = int(round((score / 10.0) * width))
+        return "[" + "#" * filled + "." * (width - filled) + "]"
+
     def _get_rating(self, score):
-        if score >= 9: return "EXCELLENT ⭐⭐⭐"
-        elif score >= 7: return "GOOD ⭐⭐"
-        elif score >= 5: return "FAIR ⭐"
-        else: return "NEEDS IMPROVEMENT ⚠️"
+        if score >= 9:
+            return "EXCELLENT"
+        if score >= 7:
+            return "GOOD"
+        if score >= 5:
+            return "FAIR"
+        return "NEEDS IMPROVEMENT"

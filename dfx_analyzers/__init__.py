@@ -1,5 +1,6 @@
 """DFX Analysis Suite - Design for Excellence Analysis Tool"""
 
+from .cad_reader import CADGeometry, read_cad
 from .dfa_analyzer import DFAAnalyzer
 from .dfm_analyzer import DFMAnalyzer
 from .dfi_analyzer import DFIAnalyzer
@@ -9,6 +10,8 @@ from .master_analyzer import ComprehensiveDFXAnalyzer
 __version__ = "1.0.0"
 __author__ = "Vighnesh Industrial"
 __all__ = [
+    "CADGeometry",
+    "read_cad",
     "DFAAnalyzer",
     "DFMAnalyzer",
     "DFIAnalyzer",

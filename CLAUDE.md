@@ -1,0 +1,88 @@
+# CLAUDE.md
+
+Guidance for Claude Code when working in this repository.
+
+## What this project is
+
+A Design for Excellence (DFX) analysis tool for CAD parts. It reads a CAD file,
+measures what it can, and reports manufacturability (DFM), inspection (DFI),
+assembly (DFA) and serviceability (DFS) findings.
+
+## The rule that matters most
+
+**Never invent a measurement.** Every number in a report must either be read
+from the CAD file or supplied by the user. When something cannot be measured,
+the code returns `None` and the report says so - it does not substitute a
+default and present it as a finding. `CADGeometry.estimated_mass_g()` returning
+`None` rather than a bounding-box guess is the reference example.
+
+A related rule: an empty findings list means "nothing found in the checks that
+could be run", and the reports say exactly that. Do not let a report imply a
+part passed checks that never executed.
+
+## Dependency policy
+
+`dfx_analyzers/` and `analyze.py` import **standard library only**. This is
+deliberate: the project's history is a user who could not get past
+`pip install`, and the analysis has to work on a bare Python install.
+
+* Flask, Flask-Cors and Werkzeug are for `web_dashboard/` only.
+* CadQuery is dev-only, used by `scripts/generate_sample_parts.py`.
+* Do not add a runtime dependency to the core without a strong reason. In
+  particular `FreeCAD` is **not** pip-installable and must never reappear in
+  `requirements.txt`.
+
+## Windows encoding
+
+Report text is plain ASCII on purpose, and every `open(..., 'w')` passes
+`encoding='utf-8'` explicitly. Windows defaults to cp1252, and box-drawing
+characters or emoji in a report crash the write with a `charmap` error. Tests
+in `tests/test_reports.py` assert `report.encode('cp1252')` succeeds - keep
+them passing rather than working around them.
+
+## Layout
+
+```
+analyze.py                 CLI entry point, no dependencies
+dfx_analyzers/
+  cad_reader.py            STEP + STL parsing -> CADGeometry
+  dfm_analyzer.py          Manufacturability checks (geometry-driven)
+  dfi_analyzer.py          Inspection checks (geometry-driven)
+  dfa_analyzer.py          Assembly scoring (parameter-driven)
+  dfs_analyzer.py          Serviceability scoring
+  master_analyzer.py       Orchestration, report assembly, scores()
+web_dashboard/app.py       Flask upload dashboard
+scripts/                   Batch analysis, Creo export helper, sample generator
+example_parts/             sample_bracket.STEP and .stl (committed)
+tests/                     53 tests
+```
+
+## Commands
+
+```bash
+python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
+python -m unittest discover -s tests          # no dependencies needed
+.venv/bin/python -m pytest tests/ -q          # 53 pass
+.venv/bin/python web_dashboard/app.py         # dashboard on :5000
+```
+
+## Testing conventions
+
+* The web tests skip automatically when Flask is missing - keep that guard.
+* `example_parts/sample_bracket.STEP` is a fixture with **deliberate** DFX
+  problems (a 1.5 mm hole, five distinct diameters). Tests assert on those
+  values, so regenerating the samples means updating the expectations in
+  `tests/test_cad_reader.py`.
+* The sample geometry was validated against the OpenCASCADE kernel: 24 faces,
+  13 planes, 10 cylindrical radii, and an STL volume within 0.01% of exact.
+
+## Adding a DFX check
+
+1. Add the measurement to `cad_reader.py` if it is not already extracted.
+2. Add the check as a `_check_*` method on the relevant analyzer, called from
+   `analyze_geometry()`.
+3. Guard it: return early when the measurement is `None`.
+4. Write the recommendation as an action an engineer can take, with the number
+   that triggered it.
+5. Add a test that asserts the check fires on the sample bracket, or on a
+   fixture built in the test.
