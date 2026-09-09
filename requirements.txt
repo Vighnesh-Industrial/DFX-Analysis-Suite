@@ -1,0 +1,25 @@
+# Core dependencies
+FreeCAD>=0.21.0
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# CAD file parsing
+trimesh>=3.20.0
+pyassimp>=4.1.4
+steptools>=1.0.0
+
+# Mesh analysis
+pymeshlab>=2023.12
+
+# Data processing
+openpyxl>=3.10.0  # Excel export
+reportlab>=4.0.0  # PDF generation
+matplotlib>=3.7.0  # Plotting
+seaborn>=0.12.0
+
+# Utilities
+python-dotenv>=1.0.0
+click>=8.1.0  # CLI
+rich>=13.0.0  # Terminal formatting
+loguru>=0.7.0  # Logging

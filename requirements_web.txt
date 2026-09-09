@@ -1,0 +1,23 @@
+-r requirements.txt
+
+# Web framework
+Flask>=3.0.0
+Flask-CORS>=4.0.0
+Flask-Upload>=0.4.0
+Werkzeug>=3.0.0
+
+# Database (optional)
+SQLAlchemy>=2.0.0
+Flask-SQLAlchemy>=3.0.0
+
+# Authentication (optional)
+Flask-Login>=0.6.0
+PyJWT>=2.8.0
+
+# Task queue
+celery>=5.3.0
+redis>=5.0.0
+
+# Deployment
+gunicorn>=21.0.0
+python-multipart>=0.0.6
