@@ -1,0 +1,27 @@
+{
+  "component_name": "Sample Bracket",
+  "dfa_parameters": {
+    "combined": false,
+    "num_parts": 1,
+    "is_symmetric": true,
+    "has_guides": true,
+    "num_fasteners": 2,
+    "use_snap_fit": false,
+    "fasteners_standardized": true,
+    "has_grip_feature": true,
+    "part_mass_g": 450,
+    "fragile": false,
+    "straight_line_insertion": true,
+    "rotation_needed": false,
+    "insertion_depth_mm": 30,
+    "tool_clearance_mm": 18,
+    "is_asymmetric": false,
+    "has_keying": true,
+    "unique_features": true
+  },
+  "dfm_parameters": {
+    "process_type": "injection_molding",
+    "description": "Design for Manufacturability via injection molding"
+  },
+  "notes": "Template file for DFX analysis parameters"
+}
