@@ -42,6 +42,15 @@ The housing reports `Draft confirmed - all 8 wall faces carry between 2.0 and
 2.0 degrees of draft`; run the bracket through the same process and it fails
 the draft check with `9 of 9 wall faces at 0.0 deg`.
 
+### Views of the part
+
+```bash
+python analyze.py example_parts/sample_bracket.STEP --svg-dir views/
+```
+
+Writes `iso.svg`, `front.svg`, `top.svg` and `right.svg`. STEP files render as
+wireframes with proper arcs for holes and fillets; STL files render shaded.
+
 ### A printable report
 
 ```bash
@@ -60,7 +69,7 @@ solid model in it.
 python -m unittest discover -s tests
 ```
 
-Expect `OK` for 70 tests (12 skip if Flask is not installed).
+Expect `OK` for 96 tests (17 skip if Flask is not installed).
 
 ## 3. Start the web dashboard
 
@@ -74,6 +83,11 @@ Expect `OK` for 70 tests (12 skip if Flask is not installed).
 
 Open <http://localhost:5000>, choose a process, upload
 `example_parts/sample_bracket.STEP` and press **ANALYZE**.
+
+The analysis runs in the background: you should see a progress bar move
+through *Reading CAD file*, *Measuring wall thickness*, *Running DFX checks*
+and *Rendering views*. The result shows four rendered views of the part above
+the report.
 
 ---
 

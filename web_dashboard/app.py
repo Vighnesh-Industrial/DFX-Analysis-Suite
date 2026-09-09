@@ -9,9 +9,11 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dfx_analyzers import ComprehensiveDFXAnalyzer, DFAAnalyzer
 from dfx_analyzers.cad_reader import READABLE_EXTENSIONS, RECOGNISED_EXTENSIONS
+from jobs import JobStore
 
 app = Flask(__name__)
 CORS(app)
@@ -29,6 +31,9 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 
 FALSE_VALUES = {'false', 'off', '0', 'no', 'n'}
+
+# Analysis runs on a worker thread so a dense mesh does not block the browser.
+jobs = JobStore()
 
 
 def allowed_file(filename):
@@ -103,57 +108,95 @@ def get_formats():
                     'measurable_extensions': sorted(READABLE_EXTENSIONS)})
 
 
+def run_analysis(job, filepath, filename, params, timestamp):
+    """The background worker: read, analyse, render and write the reports."""
+    job.report(0.05, 'Reading CAD file')
+
+    analyzer = ComprehensiveDFXAnalyzer(
+        filepath,
+        process_type=params.get('process_type', 'general'),
+        progress=lambda fraction, message: job.report(
+            0.05 + 0.45 * fraction, message))
+
+    job.report(0.55, 'Running DFX checks')
+    master_report = analyzer.generate_master_report(params)
+
+    job.report(0.72, 'Rendering views')
+    views = analyzer.views()
+
+    job.report(0.88, 'Writing reports')
+    report_filename = 'DFX_Report_%s.txt' % timestamp
+    # encoding is explicit: the default on Windows is cp1252, which cannot
+    # encode every character a report may contain.
+    with open(os.path.join(app.config['UPLOAD_FOLDER'], report_filename),
+              'w', encoding='utf-8') as handle:
+        handle.write(master_report)
+
+    html_filename = 'DFX_Report_%s.html' % timestamp
+    with open(os.path.join(app.config['UPLOAD_FOLDER'], html_filename),
+              'w', encoding='utf-8') as handle:
+        handle.write(analyzer.to_html(params))
+
+    return {
+        'success': True,
+        'filename': filename,
+        'report_filename': report_filename,
+        'html_filename': html_filename,
+        'report': master_report,
+        'geometry': analyzer.geometry.to_dict(),
+        'scores': analyzer.scores(),
+        'views': views,
+        'view_note': analyzer.view_note(),
+        'timestamp': timestamp,
+    }
+
+
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
-    """Upload and analyze CAD file"""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file uploaded'}), 400
+    """Accept a CAD file and queue it for analysis.
 
-        uploaded = request.files['file']
-        if uploaded.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
+    Returns 202 with a job id; poll /api/jobs/<id> for progress and result.
+    """
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
 
-        if not allowed_file(uploaded.filename):
-            return jsonify({'error': 'File type not allowed. Allowed: %s'
-                                     % ', '.join(sorted(ALLOWED_EXTENSIONS))}), 400
+    uploaded = request.files['file']
+    if uploaded.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
 
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = '%s_%s' % (timestamp, secure_filename(uploaded.filename))
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        uploaded.save(filepath)
+    if not allowed_file(uploaded.filename):
+        return jsonify({'error': 'File type not allowed. Allowed: %s'
+                                 % ', '.join(sorted(ALLOWED_EXTENSIONS))}), 400
 
-        params = collect_params(request.form)
-        analyzer = ComprehensiveDFXAnalyzer(
-            filepath, process_type=params.get('process_type', 'general'))
-        master_report = analyzer.generate_master_report(params)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
+    filename = '%s_%s' % (timestamp, secure_filename(uploaded.filename))
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    uploaded.save(filepath)
 
-        report_filename = 'DFX_Report_%s.txt' % timestamp
-        report_filepath = os.path.join(app.config['UPLOAD_FOLDER'], report_filename)
-        # encoding is explicit: the default on Windows is cp1252, which
-        # cannot encode every character a report may contain.
-        with open(report_filepath, 'w', encoding='utf-8') as handle:
-            handle.write(master_report)
+    params = collect_params(request.form)
+    job = jobs.submit(
+        lambda job: run_analysis(job, filepath, filename, params, timestamp),
+        label=secure_filename(uploaded.filename))
 
-        html_filename = 'DFX_Report_%s.html' % timestamp
-        with open(os.path.join(app.config['UPLOAD_FOLDER'], html_filename),
-                  'w', encoding='utf-8') as handle:
-            handle.write(analyzer.to_html(params))
+    return jsonify({'job_id': job.id,
+                    'status': job.status,
+                    'poll_url': '/api/jobs/%s' % job.id}), 202
 
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'report_filename': report_filename,
-            'html_filename': html_filename,
-            'report': master_report,
-            'geometry': analyzer.geometry.to_dict(),
-            'scores': analyzer.scores(),
-            'timestamp': timestamp,
-        })
 
-    except Exception as error:  # noqa: BLE001 - surfaced to the user as JSON
-        app.logger.exception('Analysis failed')
-        return jsonify({'error': '%s: %s' % (type(error).__name__, error)}), 500
+@app.route('/api/jobs/<job_id>')
+def job_status(job_id):
+    """Progress and, once finished, the result of one analysis."""
+    job = jobs.get(job_id)
+    if job is None:
+        return jsonify({'error': 'Unknown job id'}), 404
+    return jsonify(job.to_dict())
+
+
+@app.route('/api/jobs')
+def job_list():
+    """Recent jobs, without their results."""
+    return jsonify({'jobs': [job.to_dict(include_result=False)
+                             for job in jobs.recent(20)]})
 
 
 @app.route('/api/analyze-dfa', methods=['POST'])

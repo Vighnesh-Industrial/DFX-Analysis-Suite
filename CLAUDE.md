@@ -46,16 +46,18 @@ them passing rather than working around them.
 analyze.py                 CLI entry point, no dependencies
 dfx_analyzers/
   cad_reader.py            STEP + STL parsing -> CADGeometry
+  render.py                Orthographic SVG views (shaded mesh / STEP wireframe)
   html_report.py           Printable HTML report
   dfm_analyzer.py          Manufacturability checks (geometry-driven)
   dfi_analyzer.py          Inspection checks (geometry-driven)
   dfa_analyzer.py          Assembly scoring (parameter-driven)
   dfs_analyzer.py          Serviceability scoring
   master_analyzer.py       Orchestration, report assembly, scores()
-web_dashboard/app.py       Flask upload dashboard
+web_dashboard/app.py       Flask dashboard; queues analyses as background jobs
+web_dashboard/jobs.py      Thread-backed job runner with progress reporting
 scripts/                   Batch analysis, Creo export helper, sample generator
 example_parts/             sample_bracket.STEP and .stl (committed)
-tests/                     70 tests
+tests/                     96 tests
 ```
 
 ## Commands
@@ -63,7 +65,7 @@ tests/                     70 tests
 ```bash
 python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 python -m unittest discover -s tests          # no dependencies needed
-.venv/bin/python -m pytest tests/ -q          # 70 pass
+.venv/bin/python -m pytest tests/ -q          # 96 pass
 .venv/bin/python web_dashboard/app.py         # dashboard on :5000
 ```
 
@@ -92,6 +94,18 @@ python -m unittest discover -s tests          # no dependencies needed
   Never describe it as a proven global minimum.
 * **A check that runs and passes is a note, not a warning.** Notes carry no
   score penalty; putting a pass in `warnings` silently costs the part 0.4.
+* **No measurable geometry means no DFM/DFI score.** `scores()` returns `None`
+  for both, not 10 minus a couple of warnings - otherwise an empty file reads
+  as a good part. `geometry_measured` in the same dict says which it was.
+* **Views are never faked.** `render_views` returns only the views the file
+  can actually supply; `render_note` explains any absence.
+
+## The dashboard is asynchronous
+
+`POST /api/analyze` returns **202** with a `job_id`; the browser polls
+`/api/jobs/<id>` for `status`, `progress` and `message`. Analysis runs on a
+worker thread in `web_dashboard/jobs.py`. Tests must poll rather than expect a
+result from the POST - see `_await_job` in `tests/test_web_app.py`.
 
 ## Adding a DFX check
 

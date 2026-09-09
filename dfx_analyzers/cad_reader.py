@@ -601,7 +601,18 @@ def _ray_triangle(origin, direction, v0, v1, v2, epsilon=1e-9):
     return distance if distance > epsilon else None
 
 
-def measure_wall_thickness(triangles, max_rays=250):
+def ray_budget(triangle_count, work_limit=600000):
+    """How many rays to cast, given the cost is rays x triangles.
+
+    Dense meshes get fewer rays so a measurement still finishes in seconds.
+    The report always states how many rays were actually cast.
+    """
+    if triangle_count <= 0:
+        return 0
+    return max(24, min(250, work_limit // max(1, triangle_count)))
+
+
+def measure_wall_thickness(triangles, max_rays=None, progress=None):
     """Measure local wall thickness by casting rays into the solid.
 
     From the centre of a sample of faces, a ray is fired along the inward
@@ -616,7 +627,13 @@ def measure_wall_thickness(triangles, max_rays=250):
     if count < 4:
         return (None, 0)
 
+    if max_rays is None:
+        max_rays = ray_budget(count)
+    if max_rays <= 0:
+        return (None, 0)
+
     step = max(1, count // max_rays)
+    planned = max(1, len(range(0, count, step)))
     thinnest = None
     rays = 0
 
@@ -639,6 +656,10 @@ def measure_wall_thickness(triangles, max_rays=250):
                   centroid[2] + inward[2] * 1e-6)
 
         rays += 1
+        if progress and rays % 10 == 0:
+            progress(rays / float(planned),
+                     'Measuring wall thickness (%d of %d rays)'
+                     % (rays, planned))
         nearest = None
         for other in range(count):
             if other == index:
@@ -692,7 +713,7 @@ def _stl_triangles(path):
                     vertices = []
 
 
-def read_stl(path, geom):
+def read_stl(path, geom, progress=None):
     """Populate ``geom`` from an STL mesh.  Returns ``geom``."""
     lo = [float('inf')] * 3
     hi = [float('-inf')] * 3
@@ -744,7 +765,7 @@ def read_stl(path, geom):
     geom.triangles = triangles
     if geom.is_watertight:
         # Thickness is only meaningful when the mesh is closed.
-        thickness, rays = measure_wall_thickness(triangles)
+        thickness, rays = measure_wall_thickness(triangles, progress=progress)
         geom.min_wall_thickness_mm = thickness
         geom.wall_thickness_rays = rays
 
@@ -760,7 +781,7 @@ def read_stl(path, geom):
 # Entry point
 # --------------------------------------------------------------------------
 
-def read_cad(path):
+def read_cad(path, progress=None):
     """Read whatever geometry can be extracted from ``path``.
 
     Always returns a :class:`CADGeometry`.  Unreadable or unsupported files
@@ -789,9 +810,229 @@ def read_cad(path):
 
     try:
         if extension == '.stl':
-            return read_stl(path, geom)
+            return read_stl(path, geom, progress=progress)
         return read_step(path, geom)
     except (OSError, ValueError, struct.error) as error:
         geom.readable = False
         geom.read_notes.append("Could not read file: %s" % error)
         return geom
+
+# --------------------------------------------------------------------------
+# STEP edge extraction, for wireframe views
+# --------------------------------------------------------------------------
+
+_EDGE_CURVE_RE = re.compile(
+    r"EDGE_CURVE\s*\(\s*'(?:[^']|'')*'\s*,\s*#(\d+)\s*,\s*#(\d+)\s*,"
+    r"\s*#(\d+)\s*,\s*\.([TF])\.", re.S)
+
+# Reading edges means holding the point table in memory, so cap the file size.
+MAX_EDGE_FILE_BYTES = 25 * 1024 * 1024
+ARC_SEGMENTS = 48
+
+
+def _arc_points(centre, axis, ref, radius, start_angle, sweep, segments):
+    """Sample an arc lying in the plane defined by ``axis`` and ``ref``."""
+    z = _normalise_vec(axis) or (0.0, 0.0, 1.0)
+    x = _normalise_vec(ref)
+    if x is None:
+        x = (1.0, 0.0, 0.0)
+    # Re-orthogonalise x against z, then y completes the right-handed frame.
+    dot = sum(a * b for a, b in zip(x, z))
+    x = _normalise_vec(tuple(x[i] - dot * z[i] for i in range(3))) or (1.0, 0.0, 0.0)
+    y = (z[1] * x[2] - z[2] * x[1],
+         z[2] * x[0] - z[0] * x[2],
+         z[0] * x[1] - z[1] * x[0])
+
+    points = []
+    for step in range(segments + 1):
+        angle = start_angle + sweep * (step / float(segments))
+        cos_a, sin_a = math.cos(angle) * radius, math.sin(angle) * radius
+        points.append(tuple(centre[i] + x[i] * cos_a + y[i] * sin_a
+                            for i in range(3)))
+    return points
+
+
+def _normalise_vec(vector):
+    if not vector:
+        return None
+    length = math.sqrt(sum(component ** 2 for component in vector))
+    if length == 0:
+        return None
+    return tuple(component / length for component in vector)
+
+
+def read_step_edges(path, max_bytes=MAX_EDGE_FILE_BYTES):
+    """Return the model's edges as polylines in millimetres.
+
+    Straight edges become two-point lines; circular edges are swept properly
+    using the curve's own centre, axis and sense flag, so holes and fillets
+    draw as arcs rather than chords. Curve types that are not lines or
+    circles fall back to a straight chord between the edge's vertices.
+
+    Returns an empty list when the file is missing, too large to hold in
+    memory, or carries no edges. It never raises.
+    """
+    try:
+        if os.path.getsize(path) > max_bytes:
+            return []
+        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+            text = handle.read()
+    except OSError:
+        return []
+
+    start = text.find('DATA;')
+    if start == -1:
+        return []
+    data_text = text[start + 5:]
+
+    points = {}
+    vertices = {}
+    directions = {}
+    placements = {}
+    circles = {}
+    # An EDGE_CURVE points at a SURFACE_CURVE or SEAM_CURVE, whose first
+    # reference is the actual 3D basis curve. Follow that hop.
+    basis_curves = {}
+    edges = []
+    scale = None
+
+    for statement in _step_statements(data_text):
+        instance = _INSTANCE_RE.match(statement)
+        body = instance.group(2) if instance else statement
+        entity_id = instance.group(1) if instance else None
+        names = set(_ENTITY_RE.findall(body))
+
+        if scale is None:
+            unit = _step_units(body)
+            if unit:
+                scale = unit[1]
+
+        if entity_id and 'CARTESIAN_POINT' in names:
+            found = _POINT_RE.search(body)
+            if found:
+                coords = [_to_float(found.group(i)) for i in (1, 2, 3)]
+                if all(c is not None for c in coords):
+                    points[entity_id] = tuple(coords)
+        elif entity_id and 'DIRECTION' in names:
+            found = _POINT_RE.search(body)
+            if found:
+                coords = [_to_float(found.group(i)) for i in (1, 2, 3)]
+                if all(c is not None for c in coords):
+                    directions[entity_id] = tuple(coords)
+        elif entity_id and 'VERTEX_POINT' in names:
+            refs = _REF_RE.findall(body)
+            if refs:
+                vertices[entity_id] = refs[-1]
+        elif entity_id and 'AXIS2_PLACEMENT_3D' in names:
+            refs = _REF_RE.findall(body)
+            if len(refs) >= 3:
+                placements[entity_id] = (refs[0], refs[1], refs[2])
+            elif len(refs) == 2:
+                placements[entity_id] = (refs[0], refs[1], None)
+        elif entity_id and 'CIRCLE' in names:
+            refs = _REF_RE.findall(body)
+            radius = _RADIUS_1_RE.search(body)
+            if refs and radius:
+                value = _to_float(radius.group(1))
+                if value is not None:
+                    circles[entity_id] = (refs[0], value)
+        elif entity_id and ('SURFACE_CURVE' in names or 'SEAM_CURVE' in names):
+            refs = _REF_RE.findall(body)
+            if refs:
+                basis_curves[entity_id] = refs[0]
+
+        if 'EDGE_CURVE' in names:
+            found = _EDGE_CURVE_RE.search(body)
+            if found:
+                edges.append((found.group(1), found.group(2),
+                              found.group(3), found.group(4) == 'T'))
+
+    factor = scale if scale else 1.0
+    polylines = []
+
+    for start_vertex, end_vertex, curve_id, same_sense in edges:
+        start_point = points.get(vertices.get(start_vertex))
+        end_point = points.get(vertices.get(end_vertex))
+        if start_point is None or end_point is None:
+            continue
+
+        circle = circles.get(_resolve_curve(curve_id, basis_curves, circles))
+        if circle is None:
+            polylines.append([start_point, end_point])
+            continue
+
+        placement_id, radius = circle
+        placement = placements.get(placement_id)
+        if not placement:
+            polylines.append([start_point, end_point])
+            continue
+        centre = points.get(placement[0])
+        axis = directions.get(placement[1])
+        ref = directions.get(placement[2]) if placement[2] else None
+        if centre is None or axis is None:
+            polylines.append([start_point, end_point])
+            continue
+
+        arc = _circle_arc(centre, axis, ref, radius,
+                          start_point, end_point, same_sense)
+        polylines.append(arc if arc else [start_point, end_point])
+
+    if factor != 1.0:
+        polylines = [[tuple(c * factor for c in point) for point in line]
+                     for line in polylines]
+    return polylines
+
+
+def _resolve_curve(curve_id, basis_curves, circles, max_hops=4):
+    """Follow SURFACE_CURVE / SEAM_CURVE indirection to the basis curve."""
+    seen = set()
+    current = curve_id
+    for _ in range(max_hops):
+        if current in circles or current not in basis_curves:
+            return current
+        if current in seen:
+            return current
+        seen.add(current)
+        current = basis_curves[current]
+    return current
+
+
+def _circle_arc(centre, axis, ref, radius, start_point, end_point, same_sense):
+    """Sweep a circular edge between its two vertices, or None."""
+    z = _normalise_vec(axis)
+    if z is None:
+        return None
+    x = _normalise_vec(ref) if ref else None
+    if x is None:
+        # Any vector perpendicular to the axis will do as the reference.
+        seed = (1.0, 0.0, 0.0) if abs(z[0]) < 0.9 else (0.0, 1.0, 0.0)
+        dot = sum(a * b for a, b in zip(seed, z))
+        x = _normalise_vec(tuple(seed[i] - dot * z[i] for i in range(3)))
+        if x is None:
+            return None
+    dot = sum(a * b for a, b in zip(x, z))
+    x = _normalise_vec(tuple(x[i] - dot * z[i] for i in range(3)))
+    if x is None:
+        return None
+    y = (z[1] * x[2] - z[2] * x[1],
+         z[2] * x[0] - z[0] * x[2],
+         z[0] * x[1] - z[1] * x[0])
+
+    def angle_of(point):
+        local = tuple(point[i] - centre[i] for i in range(3))
+        return math.atan2(sum(a * b for a, b in zip(local, y)),
+                          sum(a * b for a, b in zip(local, x)))
+
+    start_angle = angle_of(start_point)
+    end_angle = angle_of(end_point)
+
+    two_pi = 2.0 * math.pi
+    if same_sense:
+        sweep = (end_angle - start_angle) % two_pi
+    else:
+        sweep = -((start_angle - end_angle) % two_pi)
+    if abs(sweep) < 1e-9:
+        sweep = two_pi if same_sense else -two_pi
+
+    segments = max(6, int(ARC_SEGMENTS * abs(sweep) / two_pi))
+    return _arc_points(centre, z, x, radius, start_angle, sweep, segments)

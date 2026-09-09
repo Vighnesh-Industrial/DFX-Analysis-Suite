@@ -47,6 +47,11 @@ th { color: var(--muted); font-weight: 600; width: 34%; }
 .finding .what { font-weight: 600; }
 .finding .act { color: var(--muted); margin-top: .3rem; font-size: .88rem; }
 .none { color: var(--good); font-size: .9rem; margin: .5rem 0 1rem; }
+.views { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: .75rem; margin: .5rem 0 1rem; }
+.views figure { margin: 0; border: 1px solid var(--line); border-radius: 6px;
+                overflow: hidden; background: #f4f6fa; }
+.views svg { display: block; width: 100%; height: auto; }
 footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--line);
          color: var(--muted); font-size: .8rem; }
 @media print {
@@ -93,7 +98,7 @@ def _section(title, findings, empty_message):
     return ''.join(html)
 
 
-def build_html(analyzer):
+def build_html(analyzer, include_views=True):
     """Render a finished :class:`ComprehensiveDFXAnalyzer` as an HTML page."""
     geom = analyzer.geometry
     scores = analyzer.scores()
@@ -105,6 +110,19 @@ def build_html(analyzer):
         _tile('DFI inspection', scores['dfi']),
         _tile('DFS service', scores['dfs']),
     ])
+
+    views_html = ''
+    if include_views:
+        rendered = analyzer.views()
+        if rendered:
+            figures = ''.join('<figure>%s</figure>' % view['svg']
+                              for view in rendered)
+            views_html = ('<h2>Views</h2><div class="views">%s</div>' % figures)
+        else:
+            note = analyzer.view_note()
+            if note:
+                views_html = ('<h2>Views</h2><p class="sub">%s</p>'
+                              % escape(note))
 
     rows = []
     for line in geom.summary_lines():
@@ -150,6 +168,8 @@ def build_html(analyzer):
 
 <div class="scores">%(tiles)s</div>
 
+%(views)s
+
 <h2>Measured geometry</h2>
 <p class="sub">Read directly from <code>%(file)s</code>.</p>
 %(geometry)s
@@ -176,6 +196,7 @@ file - not that every check passed.
         'generated': datetime.now().strftime('%Y-%m-%d %H:%M'),
         'file': escape(str(analyzer.cad_file)),
         'tiles': tiles,
+        'views': views_html,
         'geometry': geometry_table,
         'notes': notes,
         'dfm': _section('DFM - Design for Manufacturability', dfm,

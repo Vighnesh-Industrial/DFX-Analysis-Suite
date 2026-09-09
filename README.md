@@ -46,6 +46,48 @@ python3 analyze.py example_parts/sample_bracket.STEP
 
 ---
 
+## The web dashboard
+
+Upload a file, pick a process, press **ANALYZE**. The analysis runs on a
+background worker thread and the page shows live progress, so a dense mesh
+does not freeze the browser or time the request out:
+
+```
+POST /api/analyze      -> 202 {"job_id": "...", "poll_url": "/api/jobs/..."}
+GET  /api/jobs/<id>    -> {"status": "running", "progress": 0.42,
+                           "message": "Measuring wall thickness (120 of 261 rays)"}
+GET  /api/jobs         -> recent jobs, without their results
+```
+
+When the job finishes the page shows the scores, **rendered views of the
+part**, the full report, and download links for the text and printable
+reports.
+
+---
+
+## Views of the part
+
+Every analysis renders orthographic views - isometric, front, top and right -
+straight from the model, with no third-party renderer:
+
+| Source | View | How |
+|---|---|---|
+| **STL** | Shaded | Triangles back-face culled, depth sorted and flat shaded with a camera-fixed light |
+| **STEP** | Wireframe | Drawn from the model's own edge curves; circles and arcs are swept from their centre, axis and sense flag rather than chorded, so holes and fillets look like holes and fillets |
+
+They appear in the dashboard, in the printable HTML report, and can be written
+out as SVG files:
+
+```bash
+python analyze.py part.STEP --svg-dir views/     # iso.svg, front.svg, top.svg, right.svg
+python analyze.py part.stl  --no-views           # skip rendering on a dense mesh
+```
+
+A view is only produced when the file supplies the geometry to draw. When it
+does not, the report says why instead of showing an empty box.
+
+---
+
 ## What the tool actually measures
 
 Being precise about this matters: a DFX report that invents numbers is worse
@@ -116,6 +158,8 @@ python analyze.py PART.step [options]
   --html REPORT.html      write a printable report (opens in any browser)
   --json RESULTS.json     write machine-readable results
   --pull {X,Y,Z}          mould pull direction for the draft check
+  --svg-dir DIR           write each rendered view as an SVG file
+  --no-views              skip rendering views (faster on dense meshes)
   --quiet                 do not print to the screen
 ```
 
@@ -175,7 +219,9 @@ Each discipline scores out of 10, and the composite is their mean.
   symmetry, fasteners, handling, insertion, tool access, error-proofing).
 * **DFM / DFI** - start at 10 and lose **1.5** per violation or critical
   finding and **0.4** per warning. Checks that ran and passed are recorded
-  separately as `[INFO]` and cost nothing.
+  separately as `[INFO]` and cost nothing. When the file carries no measurable
+  geometry these come back as **n/a**, not as a high score - a part must never
+  look good because nothing could be checked.
 * **DFS** - starts at 10 and loses points for fastener count, tight tool
   clearance, handling mass and low modularity.
 
@@ -223,20 +269,23 @@ run_analysis.bat            Analyse a part on Windows
 run_dashboard.bat           Start the dashboard on Windows
 dfx_analyzers/
   cad_reader.py             STEP and STL geometry extraction
+  render.py                 Orthographic SVG views
   html_report.py            Printable HTML report
   dfm_analyzer.py           Manufacturability checks
   dfi_analyzer.py           Inspection checks
   dfa_analyzer.py           Assembly scoring
   dfs_analyzer.py           Serviceability scoring
   master_analyzer.py        Runs everything, builds the report
-web_dashboard/              Flask upload dashboard
+web_dashboard/
+  app.py                    Flask dashboard, queues analyses
+  jobs.py                   Background job runner with progress
 scripts/
   batch_analysis.py         Analyse a folder of parts
   convert_creo_to_step.py   Creo export helper
   generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
 example_parts/              sample_bracket (STEP+STL), sample_housing
                             (drafted), sample_assembly (2 parts)
-tests/                      70 tests
+tests/                      96 tests
 docs/                       Installation, Creo integration, examples
 ```
 
@@ -249,7 +298,7 @@ python -m unittest discover -s tests     # no dependencies needed
 .venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
-70 tests. The 12 web-dashboard tests skip automatically when Flask is not
+96 tests. The 17 web-dashboard tests skip automatically when Flask is not
 installed.
 
 ---
@@ -268,6 +317,10 @@ Honest list of what is *not* implemented yet:
 
 * Wall thickness directly from a STEP B-rep. Export an STL alongside and the
   thickness is measured from that.
+* Hidden-line removal in the wireframe views: STEP views show all edges,
+  including those behind the part.
+* Jobs live in memory, so a server restart loses them. Fine for a local tool,
+  not for a shared deployment.
 * Telling a hole from a boss or an external round. A STEP cylindrical face
   does not say which it is without full topology traversal, so they are
   reported together as "cylindrical features".

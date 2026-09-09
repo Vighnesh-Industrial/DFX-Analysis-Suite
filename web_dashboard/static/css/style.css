@@ -47,3 +47,38 @@ select {
     border: 1px solid #cbd5e0;
     border-radius: 4px;
 }
+
+.progress-track {
+    height: 10px;
+    background: #e2e8f0;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #667eea, #48bb78);
+    transition: width 0.35s ease;
+}
+
+.view-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.view-figure {
+    margin: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #f4f6fa;
+}
+
+.view-figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}

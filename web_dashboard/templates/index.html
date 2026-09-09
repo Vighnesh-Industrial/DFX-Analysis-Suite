@@ -3,7 +3,7 @@
 {% block title %}Upload CAD File - DFX Analysis Suite{% endblock %}
 
 {% block content %}
-<div class="card">
+<div class="card" id="uploadCard">
     <h2>Upload CAD File for Analysis</h2>
     <p style="color: #666; margin-bottom: 2rem;">Upload your CAD file and configure DFA parameters for comprehensive Design for Excellence analysis.</p>
     
@@ -112,10 +112,14 @@
     </form>
 </div>
 
+<div id="errorBox" class="alert alert-error" style="display: none;"></div>
+
 <div id="resultContainer" style="display: none;">
     <div class="card">
         <h2>Analysis Results</h2>
         <div id="scoreGrid" class="score-grid"></div>
+        <div id="viewGallery" class="view-gallery"></div>
+        <p id="viewNote" style="color:#718096; font-size:0.85rem;"></p>
         <pre id="resultText" style="background: #f5f5f5; padding: 1.5rem; border-radius: 5px; overflow-x: auto; font-size: 0.85rem; line-height: 1.4;"></pre>
         
         <div style="margin-top: 1.5rem;">
@@ -126,10 +130,16 @@
     </div>
 </div>
 
-<div id="loadingIndicator" style="display: none; text-align: center; margin-top: 2rem;">
-    <div style="font-size: 2rem; margin-bottom: 1rem;">Analyzing...</div>
-    <p style="color: white; font-size: 1.2rem;">Analyzing your CAD file...</p>
-    <p style="color: #ccc; font-size: 0.9rem;">This may take a moment</p>
+<div id="loadingIndicator" style="display: none;">
+    <div class="card">
+        <h2>Analysing</h2>
+        <p id="progressMessage" style="color: #4a5568; margin-bottom: 1rem;">Queued</p>
+        <div class="progress-track"><div id="progressBar" class="progress-fill"></div></div>
+        <p style="color: #718096; font-size: 0.85rem; margin-top: 0.75rem;">
+            The analysis runs on the server; this page polls for progress.
+            Wall-thickness measurement is the slow step on dense meshes.
+        </p>
+    </div>
 </div>
 {% endblock %}
 
@@ -139,46 +149,102 @@ let currentFilename = '';
 let currentReportFilename = '';
 let currentHtmlFilename = '';
 
+function setProgress(fraction, message) {
+    document.getElementById('progressBar').style.width =
+        Math.round((fraction || 0) * 100) + '%';
+    document.getElementById('progressMessage').textContent = message || '';
+}
+
+function showResult(data) {
+    currentFilename = data.filename;
+    currentReportFilename = data.report_filename;
+    currentHtmlFilename = data.html_filename;
+
+    renderScores(data.scores);
+    renderViews(data.views, data.view_note);
+    document.getElementById('resultText').textContent = data.report;
+    document.getElementById('loadingIndicator').style.display = 'none';
+    document.getElementById('resultContainer').style.display = 'block';
+}
+
+function failed(message) {
+    document.getElementById('loadingIndicator').style.display = 'none';
+    const box = document.getElementById('errorBox');
+    box.textContent = message;
+    box.style.display = 'block';
+    document.getElementById('uploadCard').style.display = 'block';
+}
+
+// Poll the job until it finishes. The analysis runs server-side, so a slow
+// part does not tie up the browser or time the request out.
+async function pollJob(jobId) {
+    try {
+        const response = await fetch('/api/jobs/' + jobId);
+        if (!response.ok) {
+            failed('Lost track of the analysis job.');
+            return;
+        }
+        const job = await response.json();
+        setProgress(job.progress, job.message);
+
+        if (job.status === 'done') {
+            showResult(job.result);
+        } else if (job.status === 'error') {
+            failed('Analysis failed - ' + job.error);
+        } else {
+            setTimeout(() => pollJob(jobId), 600);
+        }
+    } catch (error) {
+        failed('Lost connection to the server: ' + error);
+    }
+}
+
 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    
+
     const file = document.getElementById('file').files[0];
     if (!file) {
         alert('Please select a file');
         return;
     }
-    
+
     const formData = new FormData(document.getElementById('uploadForm'));
-    
-    document.getElementById('uploadForm').style.display = 'none';
+    document.getElementById('errorBox').style.display = 'none';
+    document.getElementById('uploadCard').style.display = 'none';
     document.getElementById('loadingIndicator').style.display = 'block';
-    
+    setProgress(0, 'Uploading');
+
     try {
         const response = await fetch('/api/analyze', {
             method: 'POST',
             body: formData
         });
-        
         const data = await response.json();
-        
-        if (data.success) {
-            currentFilename = data.filename;
-            currentReportFilename = data.report_filename;
-            currentHtmlFilename = data.html_filename;
-            
-            renderScores(data.scores);
-            document.getElementById('resultText').textContent = data.report;
-            document.getElementById('loadingIndicator').style.display = 'none';
-            document.getElementById('resultContainer').style.display = 'block';
+
+        if (response.status === 202 && data.job_id) {
+            setProgress(0.02, 'Queued');
+            pollJob(data.job_id);
         } else {
-            alert('Error: ' + data.error);
-            location.reload();
+            failed('Error: ' + (data.error || 'unexpected response'));
         }
     } catch (error) {
-        alert('Error uploading file: ' + error);
-        location.reload();
+        failed('Error uploading file: ' + error);
     }
 });
+
+function renderViews(views, note) {
+    const gallery = document.getElementById('viewGallery');
+    const noteEl = document.getElementById('viewNote');
+    gallery.innerHTML = '';
+    noteEl.textContent = note || '';
+    (views || []).forEach((view) => {
+        const figure = document.createElement('figure');
+        figure.className = 'view-figure';
+        // The SVG comes from our own renderer, not from the uploaded file.
+        figure.innerHTML = view.svg;
+        gallery.appendChild(figure);
+    });
+}
 
 function renderScores(scores) {
     const grid = document.getElementById('scoreGrid');

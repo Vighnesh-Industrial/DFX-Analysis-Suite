@@ -43,6 +43,10 @@ def build_parser():
                         help='Write a printable HTML report to this file')
     parser.add_argument('--pull', default='Z', choices=['X', 'Y', 'Z'],
                         help='Mould pull direction for the draft check (default Z)')
+    parser.add_argument('--svg-dir', metavar='DIR',
+                        help='Write each rendered view as an SVG file here')
+    parser.add_argument('--no-views', action='store_true',
+                        help='Skip rendering views (faster on dense meshes)')
     parser.add_argument('--quiet', '-q', action='store_true',
                         help='Do not print the report to the screen')
     return parser
@@ -83,9 +87,16 @@ def main(argv=None):
     pull = {'X': (1.0, 0.0, 0.0), 'Y': (0.0, 1.0, 0.0),
             'Z': (0.0, 0.0, 1.0)}[args.pull]
 
+    def show_progress(fraction, message):
+        if not args.quiet:
+            sys.stderr.write('\r  %-58s %3d%%' % (message[:58], fraction * 100))
+            sys.stderr.flush()
+
     analyzer = ComprehensiveDFXAnalyzer(
         args.cad_file, process_type=args.process, component_name=args.name,
-        pull_direction=pull)
+        pull_direction=pull, progress=show_progress)
+    if not args.quiet:
+        sys.stderr.write('\r' + ' ' * 66 + '\r')
     report = analyzer.generate_master_report(params)
 
     if not args.quiet:
@@ -102,8 +113,21 @@ def main(argv=None):
 
     if args.html:
         with open(args.html, 'w', encoding='utf-8') as handle:
-            handle.write(analyzer.to_html(params))
+            handle.write(analyzer.to_html(params, include_views=not args.no_views))
         print("HTML report written to %s" % args.html)
+
+    if args.svg_dir and not args.no_views:
+        os.makedirs(args.svg_dir, exist_ok=True)
+        written = 0
+        for view in analyzer.views():
+            path = os.path.join(args.svg_dir, '%s.svg' % view['name'])
+            with open(path, 'w', encoding='utf-8') as handle:
+                handle.write(view['svg'])
+            written += 1
+        if written:
+            print("%d view(s) written to %s" % (written, args.svg_dir))
+        else:
+            print("No views to write: %s" % (analyzer.view_note() or 'none'))
 
     if args.json:
         with open(args.json, 'w', encoding='utf-8') as handle:

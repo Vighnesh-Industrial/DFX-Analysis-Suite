@@ -96,6 +96,27 @@ second pass replaced the remaining proxies with real measurements:
 * **Checks that run and pass** are recorded as notes rather than warnings, so
   passing a check no longer costs score.
 
+## Third pass: background jobs and views
+
+* **The dashboard is asynchronous.** `POST /api/analyze` queues the work and
+  returns a job id; the page polls for progress and shows a live bar through
+  reading, thickness measurement, checks and rendering. Wall-thickness ray
+  casting is the slow step, and it no longer risks a request timeout.
+  Jobs run on worker threads and live in memory - right for a local tool,
+  not for a shared deployment.
+
+* **Rendered views of the part**, drawn without a third-party renderer:
+  meshes are back-face culled, depth sorted and flat shaded with a
+  camera-fixed light; STEP files are drawn from their own edge curves, with
+  circles swept from centre, axis and sense flag so holes and fillets render
+  as arcs rather than chords. This needed following the
+  EDGE_CURVE -> SURFACE_CURVE -> CIRCLE indirection; drawing the chord instead
+  had collapsed every hole to a dot and every fillet to a chamfer.
+
+* **A file with no measurable geometry now scores n/a**, not 9/10. It had been
+  scoring well precisely because none of the geometry checks could run, which
+  is the failure mode this project exists to avoid.
+
 ## Deliberate limits
 
 The tool reports what it can measure and says when it cannot measure something.
@@ -117,7 +138,8 @@ not distinguish them without full topology traversal, so they are reported as
 
 1. Distinguish holes from bosses and rounds by traversing face orientation in
    the B-rep, so the DFM messages can be more specific.
-2. Undercut detection for moulded parts, now that face normals and a pull
+2. Hidden-line removal for the STEP wireframe views.
+3. Undercut detection for moulded parts, now that face normals and a pull
    direction are both available.
-3. Apply assembly placement transforms so an assembly's envelope is correct.
-4. Wall thickness from a STEP B-rep directly, rather than via an STL export.
+4. Apply assembly placement transforms so an assembly's envelope is correct.
+5. Wall thickness from a STEP B-rep directly, rather than via an STL export.
