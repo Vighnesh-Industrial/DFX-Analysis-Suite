@@ -16,10 +16,14 @@ GENERAL_LIMITS = {
 class DFMAnalyzer:
     """Analyzes components for manufacturing feasibility."""
 
-    def __init__(self, process_type='general'):
+    def __init__(self, process_type='general', pull_direction=(0.0, 0.0, 1.0)):
         self.process = process_type
+        self.pull_direction = pull_direction
         self.violations = []
         self.warnings = []
+        # Informational findings. These record what was checked and passed,
+        # and deliberately carry no score penalty.
+        self.notes = []
 
         self.thresholds = {
             'injection_molding': {
@@ -63,6 +67,16 @@ class DFMAnalyzer:
             'Value': value,
             'Required': required,
             'Status': 'FAIL',
+            'Recommendation': recommendation
+        })
+
+    def add_note(self, part_name, issue_type, message, recommendation=''):
+        """Record an informational finding that does not affect the score."""
+        self.notes.append({
+            'Part': part_name,
+            'Type': issue_type,
+            'Status': 'INFO',
+            'Message': message,
             'Recommendation': recommendation
         })
 
@@ -124,17 +138,36 @@ class DFMAnalyzer:
                 'drilled pilot with a separate operation.' % (diameter, floor))
 
     def _check_thin_sections(self, geom, name, limits):
-        thinnest = geom.min_dimension
-        if thinnest is None:
-            return
         floor = limits.get('min_wall_thickness')
-        if floor and thinnest < floor:
-            self.add_violation(
-                name, 'Thin overall section',
-                '%.2f mm' % thinnest,
-                '>= %.2f mm' % floor,
-                'The part envelope is thinner than the process minimum. '
-                'Thicken the section or change process.')
+        ceiling = limits.get('max_wall_thickness')
+
+        # A measured wall thickness beats the bounding box by a wide margin,
+        # so use it whenever the file is a closed mesh.
+        measured = geom.min_wall_thickness_mm
+        if measured is not None:
+            if floor and measured < floor:
+                self.add_violation(
+                    name, 'Thin wall',
+                    '%.2f mm measured' % measured,
+                    '>= %.2f mm' % floor,
+                    'The thinnest wall found is below the process minimum. '
+                    'Thicken it, or move to a process that can hold it.')
+            if ceiling and measured > ceiling:
+                self.add_warning(
+                    name, 'Heavy section',
+                    'Thinnest measured wall is %.2f mm, above the %.2f mm '
+                    'guideline for this process.' % (measured, ceiling),
+                    'Thick sections cause sink marks and long cycle times. '
+                    'Core out the section and add ribs instead.')
+        else:
+            thinnest = geom.min_dimension
+            if floor and thinnest is not None and thinnest < floor:
+                self.add_violation(
+                    name, 'Thin overall section',
+                    '%.2f mm envelope' % thinnest,
+                    '>= %.2f mm' % floor,
+                    'The part envelope is thinner than the process minimum. '
+                    'Supply an STL to have the true wall thickness measured.')
 
         slenderness = geom.slenderness
         if slenderness and slenderness > 12:
@@ -155,16 +188,37 @@ class DFMAnalyzer:
                 'Each distinct diameter is a tool change. Standardise on as '
                 'few drill and cutter sizes as the design allows.')
 
+    def _check_draft(self, geom, name):
+        """Measure draft against the pull direction, rather than guessing."""
+        minimum = self.thresholds['injection_molding']['min_draft_angle']
+        walls = geom.wall_draft_angles(self.pull_direction)
+        if not walls:
+            return
+        undrafted = [a for a in walls if a < minimum]
+        if undrafted:
+            self.add_violation(
+                name, 'Insufficient draft',
+                '%d of %d wall faces at %.1f deg or less'
+                % (len(undrafted), len(walls), max(undrafted)),
+                '>= %.1f deg' % minimum,
+                'Walls parallel to the pull direction will drag on the tool. '
+                'Add at least %.1f degree of draft, measured about the %s '
+                'axis.' % (minimum, self._pull_label()))
+        else:
+            self.add_note(
+                name, 'Draft confirmed',
+                'All %d wall faces carry between %.1f and %.1f degrees of '
+                'draft.' % (len(walls), min(walls), max(walls)),
+                'No action needed. Confirm the pull direction assumed here '
+                '(%s) matches the tool.' % self._pull_label())
+
+    def _pull_label(self):
+        labels = {(0, 0, 1): 'Z', (0, 1, 0): 'Y', (1, 0, 0): 'X'}
+        return labels.get(tuple(self.pull_direction), str(self.pull_direction))
+
     def _check_process_specifics(self, geom, name):
         if self.process == 'injection_molding':
-            if geom.cone_count == 0 and geom.plane_count > 0:
-                self.add_warning(
-                    name, 'No draft detected',
-                    'No conical faces were found, which usually means the '
-                    'vertical walls have no draft.',
-                    'Add at least %.1f degree of draft to every face parallel '
-                    'to the pull direction.'
-                    % self.thresholds['injection_molding']['min_draft_angle'])
+            self._check_draft(geom, name)
             if not geom.torus_minor_radii and geom.plane_count >= 6:
                 self.add_warning(
                     name, 'Sharp corners',
@@ -245,5 +299,13 @@ class DFMAnalyzer:
             if item.get('Message'):
                 report += "         %s\n" % item['Message']
             report += "         Action:   %s\n" % item['Recommendation']
+
+        if self.notes:
+            report += "\n%s\nCHECKED AND PASSED (%d):\n" % (THIN_RULE, len(self.notes))
+            for item in self.notes:
+                report += "\n  [INFO] %s - %s\n" % (item['Part'], item['Type'])
+                report += "         %s\n" % item['Message']
+                if item.get('Recommendation'):
+                    report += "         Note:     %s\n" % item['Recommendation']
 
         return report + "\n"

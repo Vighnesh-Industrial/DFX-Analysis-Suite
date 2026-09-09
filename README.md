@@ -4,8 +4,8 @@ Automated **Design for Excellence** analysis for CAD parts:
 
 | Discipline | What it covers | Driven by |
 |---|---|---|
-| **DFM** | Design for Manufacturability | Geometry measured from the CAD file |
-| **DFI** | Design for Inspection | Geometry measured from the CAD file |
+| **DFM** | Design for Manufacturability | Wall thickness, draft angle and feature sizes measured from the CAD file |
+| **DFI** | Design for Inspection | Probe access and feature sizes measured from the CAD file |
 | **DFA** | Design for Assembly | Parameters you supply |
 | **DFS** | Design for Serviceability | Your parameters, sharpened by measured mass and size |
 
@@ -55,12 +55,36 @@ than no report.
 
 | Format | Extensions | What is extracted |
 |---|---|---|
-| **STEP** | `.step`, `.stp` | Bounding box, units, product name, B-rep face and solid counts, cylindrical / conical / toroidal surface radii |
-| **STL** | `.stl` (ASCII + binary) | Exact volume, surface area, bounding box, triangle count, watertightness |
+| **STEP** | `.step`, `.stp` | Bounding box, units, product name, B-rep face and solid counts, cylindrical / conical / toroidal radii, **per-face draft angle**, **assembly part count** |
+| **STL** | `.stl` (ASCII + binary) | Exact volume, surface area, bounding box, watertightness, **true wall thickness by ray casting** |
 
-The STEP reader is validated against OpenCASCADE: on the sample bracket it
-reports the same 24 faces, 13 planes and 10 cylindrical radii that the kernel
-does, and the STL volume matches the exact solid volume to within 0.01%.
+Both readers are validated against ground truth:
+
+* On the sample bracket the STEP reader reports the same **23 faces, 12 planes
+  and 11 cylindrical radii** that the OpenCASCADE kernel does, with identical
+  values.
+* Draft: the sample housing is modelled with an exact 2 degree taper, and the
+  tool measures **2.0 degrees** on all 8 wall faces. The machined bracket
+  measures 0.0 degrees, correctly.
+* Wall thickness: a 10 mm cube measures **9.999999 mm**, and STL volume matches
+  the exact solid volume to within 0.01%.
+
+### Draft angle
+
+Draft is measured per face against a pull direction you choose (`--pull X|Y|Z`),
+by resolving each face's surface normal out of the STEP file. It is not
+inferred from the presence of conical faces - tapering a prismatic part
+produces slanted *planes*, not cones, so that shortcut misses most real draft.
+
+### Wall thickness
+
+For a closed mesh, a ray is fired from the centre of a sample of faces along
+the inward normal, and the distance to the first face it meets is the local
+wall thickness. The result is the thinnest wall **found** by sampling, not a
+proven global minimum, and the report says how many rays were cast.
+
+STEP files carry no thickness figure - export an STL alongside to have it
+measured.
 
 ### Accepted but **not** measurable
 
@@ -89,7 +113,9 @@ python analyze.py PART.step [options]
   --name NAME             component name for the report
   --params FILE.json      DFA/DFS answers (see examples/dfx_params_template.json)
   --output REPORT.txt     write the text report
+  --html REPORT.html      write a printable report (opens in any browser)
   --json RESULTS.json     write machine-readable results
+  --pull {X,Y,Z}          mould pull direction for the draft check
   --quiet                 do not print to the screen
 ```
 
@@ -132,6 +158,10 @@ geom = read_cad('part.STEP')
 geom.dimensions                 # (80.0, 63.0, 25.0) mm
 geom.cylindrical_diameters      # [1.5, 6.5, 10.0, 16.0, 20.0]
 geom.volume_mm3                 # exact for STL, None for STEP
+geom.min_wall_thickness_mm      # measured by ray casting, None for STEP
+geom.wall_draft_angles()        # per-face draft, degrees from the pull axis
+geom.undrafted_wall_count(1.0)  # walls with less than 1 degree of draft
+geom.part_count                 # read from a STEP assembly
 geom.estimated_mass_g(2.70)     # None when volume is unknown - never guessed
 ```
 
@@ -144,7 +174,8 @@ Each discipline scores out of 10, and the composite is their mean.
 * **DFA** - weighted average of seven assembly factors (part reduction,
   symmetry, fasteners, handling, insertion, tool access, error-proofing).
 * **DFM / DFI** - start at 10 and lose **1.5** per violation or critical
-  finding and **0.4** per warning.
+  finding and **0.4** per warning. Checks that ran and passed are recorded
+  separately as `[INFO]` and cost nothing.
 * **DFS** - starts at 10 and loses points for fastener count, tight tool
   clearance, handling mass and low modularity.
 
@@ -192,6 +223,7 @@ run_analysis.bat            Analyse a part on Windows
 run_dashboard.bat           Start the dashboard on Windows
 dfx_analyzers/
   cad_reader.py             STEP and STL geometry extraction
+  html_report.py            Printable HTML report
   dfm_analyzer.py           Manufacturability checks
   dfi_analyzer.py           Inspection checks
   dfa_analyzer.py           Assembly scoring
@@ -202,8 +234,9 @@ scripts/
   batch_analysis.py         Analyse a folder of parts
   convert_creo_to_step.py   Creo export helper
   generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
-example_parts/              Sample bracket, STEP + STL
-tests/                      53 tests
+example_parts/              sample_bracket (STEP+STL), sample_housing
+                            (drafted), sample_assembly (2 parts)
+tests/                      70 tests
 docs/                       Installation, Creo integration, examples
 ```
 
@@ -216,7 +249,7 @@ python -m unittest discover -s tests     # no dependencies needed
 .venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
-53 tests. The 12 web-dashboard tests skip automatically when Flask is not
+70 tests. The 12 web-dashboard tests skip automatically when Flask is not
 installed.
 
 ---
@@ -233,10 +266,14 @@ installed.
 
 Honest list of what is *not* implemented yet:
 
-* True wall-thickness measurement (needs a solid-modelling kernel).
-* Draft-angle measurement against a stated pull direction.
-* Assembly-level DFA from `.asm` structure.
-* PDF report export.
+* Wall thickness directly from a STEP B-rep. Export an STL alongside and the
+  thickness is measured from that.
+* Telling a hole from a boss or an external round. A STEP cylindrical face
+  does not say which it is without full topology traversal, so they are
+  reported together as "cylindrical features".
+* Applying assembly placement transforms, so an assembly's bounding box is
+  the union of untransformed component geometry. The report says so.
+* Undercut and side-action detection for moulded parts.
 
 ---
 

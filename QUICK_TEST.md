@@ -14,10 +14,9 @@ You should see the geometry read out of the file:
 
 ```
   Bounding box:    80.00 x 63.00 x 25.00 mm
-  B-rep faces:     24 (planar: 13)
+  B-rep faces:     23 (planar: 12)
   Solid bodies:    1
-  Cylindrical features (holes, bosses or rounds):
-                   11 faces, diameters 1.50, 6.50, 10.00, 16.00, 20.00 mm
+  Cylindrical:     11 faces; diameters 1.50, 6.50, 10.00, 16.00, 20.00 mm
 ```
 
 and these findings, which are real properties of the sample bracket:
@@ -25,6 +24,32 @@ and these findings, which are real properties of the sample bracket:
 * **DFM violation** - the 1.50 mm pilot hole is below the 2.00 mm CNC minimum.
 * **DFI critical** - that same hole is too small for a 5 mm CMM touch probe.
 * **DFM warning** - five distinct diameters means five tool changes.
+
+Then try the two other fixtures, which exercise the other measurements:
+
+```bash
+# A moulded housing with a real 2 degree taper - draft is measured, not guessed
+python analyze.py example_parts/sample_housing.STEP --process injection_molding
+
+# The same bracket as a mesh - wall thickness is measured by ray casting
+python analyze.py example_parts/sample_bracket.stl --process injection_molding
+
+# A two-part assembly - the part count is read from the file
+python analyze.py example_parts/sample_assembly.STEP
+```
+
+The housing reports `Draft confirmed - all 8 wall faces carry between 2.0 and
+2.0 degrees of draft`; run the bracket through the same process and it fails
+the draft check with `9 of 9 wall faces at 0.0 deg`.
+
+### A printable report
+
+```bash
+python analyze.py example_parts/sample_bracket.STEP --html report.html
+```
+
+Open `report.html` in any browser and print it to PDF. The dashboard offers
+the same file under **Download Printable Report**.
 
 If the geometry block says *"none measurable"*, the file you passed has no
 solid model in it.
@@ -35,7 +60,7 @@ solid model in it.
 python -m unittest discover -s tests
 ```
 
-Expect `OK` for 53 tests (12 skip if Flask is not installed).
+Expect `OK` for 70 tests (12 skip if Flask is not installed).
 
 ## 3. Start the web dashboard
 

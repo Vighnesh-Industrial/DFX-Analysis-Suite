@@ -22,16 +22,18 @@ class ComprehensiveDFXAnalyzer:
     serviceability answers come from the parameters supplied by the engineer.
     """
 
-    def __init__(self, cad_file_path, process_type='general', component_name=None):
+    def __init__(self, cad_file_path, process_type='general', component_name=None,
+                 pull_direction=(0.0, 0.0, 1.0)):
         self.cad_file = cad_file_path
         self.process_type = process_type
+        self.pull_direction = pull_direction
         self.geometry = read_cad(cad_file_path)
         self.component_name = (component_name
                                or self.geometry.product_name
                                or self.geometry.file_name
                                or 'Component')
         self.dfa_analyzer = DFAAnalyzer(self.component_name)
-        self.dfm_analyzer = DFMAnalyzer(process_type)
+        self.dfm_analyzer = DFMAnalyzer(process_type, pull_direction)
         self.dfi_analyzer = DFIAnalyzer()
         self.dfs_analyzer = DFSAnalyzer()
         self.results = {}
@@ -44,7 +46,15 @@ class ComprehensiveDFXAnalyzer:
         process = params.pop('process_type', None)
         if process:
             self.process_type = process
-            self.dfm_analyzer = DFMAnalyzer(process)
+            self.dfm_analyzer = DFMAnalyzer(process, self.pull_direction)
+
+        # A STEP assembly states its own part count. Use it unless the caller
+        # gave one, and record that it came from the file.
+        self.part_count_source = 'supplied'
+        measured_parts = self.geometry.part_count
+        if not params.get('num_parts') and measured_parts:
+            params['num_parts'] = measured_parts
+            self.part_count_source = 'measured from the file'
 
         dfa_params = {k: v for k, v in params.items()
                       if k not in ('density_g_cm3',)}
@@ -120,6 +130,12 @@ class ComprehensiveDFXAnalyzer:
         lines = ["\n%s\nMEASURED GEOMETRY\nRead directly from the CAD file\n%s\n" % (RULE, RULE), ""]
         for line in self.geometry.summary_lines():
             lines.append("  " + line)
+        walls = self.geometry.wall_draft_angles(self.pull_direction)
+        if walls:
+            lines.append("  Wall draft:      %.1f to %.1f deg from the %s pull "
+                         "direction (%d wall faces)"
+                         % (min(walls), max(walls),
+                            self.dfm_analyzer._pull_label(), len(walls)))
         if self.geometry.read_notes:
             lines.append("")
             for note in self.geometry.read_notes:
@@ -158,6 +174,13 @@ class ComprehensiveDFXAnalyzer:
         else:
             lines.append("  No blocking findings in the checks that could be run.")
         return "\n".join(lines) + "\n"
+
+    def to_html(self, component_params=None):
+        """Render the analysis as a self-contained, printable HTML page."""
+        from .html_report import build_html
+        if not self.results:
+            self.run_all_analyses(component_params or {})
+        return build_html(self)
 
     def generate_master_report(self, component_params):
         """Generate master DFX report for component"""

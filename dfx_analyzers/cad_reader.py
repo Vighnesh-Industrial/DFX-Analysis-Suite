@@ -14,6 +14,7 @@ SolidWorks .sldprt/.sldasm, IGES) are reported honestly as unreadable with
 guidance, rather than silently producing an empty analysis.
 """
 
+import math
 import os
 import re
 import struct
@@ -70,7 +71,23 @@ class CADGeometry:
     sphere_count: int = 0
     bspline_surface_count: int = 0
 
+    # Assembly structure (STEP)
+    assembly_instance_count: int = 0
+    distinct_product_count: int = 0
+
+    # Measured draft angles (STEP conical faces), degrees from the axis
+    draft_angles_deg: list = field(default_factory=list)
+
+    # Outward normals of the planar faces, for draft measurement
+    plane_normals: list = field(default_factory=list, repr=False)
+    closed_shell_count: int = 0
+
+    # Wall thickness, measured by ray casting through a mesh
+    min_wall_thickness_mm: float = None
+    wall_thickness_rays: int = 0
+
     # Mesh measurements (STL)
+    triangles: list = field(default_factory=list, repr=False)
     triangle_count: int = 0
     volume_mm3: float = None
     surface_area_mm2: float = None
@@ -122,6 +139,68 @@ class CADGeometry:
     def fillet_radii(self):
         return sorted({round(r, 2) for r in self.torus_minor_radii if r > 0})
 
+    def wall_draft_angles(self, pull=(0.0, 0.0, 1.0), wall_limit_deg=80.0):
+        """Draft angle of every wall face, in degrees from the pull direction.
+
+        0 degrees is a wall exactly parallel to the pull direction, i.e. no
+        draft at all. Faces steeper than ``wall_limit_deg`` are floors and
+        ceilings rather than walls, and are excluded.
+
+        Returns an empty list when the file carries no face normals.
+        """
+        length = math.sqrt(sum(component ** 2 for component in pull))
+        if length == 0:
+            return []
+        unit = [component / length for component in pull]
+
+        angles = []
+        for normal in self.plane_normals:
+            magnitude = math.sqrt(sum(component ** 2 for component in normal))
+            if magnitude == 0:
+                continue
+            cosine = abs(sum(a * b for a, b in zip(normal, unit))) / magnitude
+            cosine = max(-1.0, min(1.0, cosine))
+            draft = 90.0 - math.degrees(math.acos(cosine))
+            if draft < wall_limit_deg:
+                angles.append(draft)
+
+        # A conical wall's half-angle is its draft angle directly.
+        for half_angle in self.draft_angles_deg:
+            if half_angle < wall_limit_deg:
+                angles.append(half_angle)
+        return sorted(round(a, 2) for a in angles)
+
+    def undrafted_wall_count(self, minimum_deg=1.0, pull=(0.0, 0.0, 1.0)):
+        """How many wall faces have less draft than ``minimum_deg``."""
+        return sum(1 for a in self.wall_draft_angles(pull) if a < minimum_deg)
+
+    @property
+    def has_solid_body(self):
+        """True when the file carries a closed body, solid or surface model."""
+        return bool(self.solid_count or self.closed_shell_count)
+
+    @property
+    def is_assembly(self):
+        return self.assembly_instance_count > 1
+
+    @property
+    def part_count(self):
+        """Number of component instances, or 1 for a single solid part."""
+        if self.assembly_instance_count:
+            return self.assembly_instance_count
+        if self.solid_count:
+            return self.solid_count
+        # A shelled part exports as a surface model with a closed shell,
+        # which is still one body.
+        if self.closed_shell_count:
+            return self.closed_shell_count
+        return None
+
+    @property
+    def draft_angles(self):
+        """Distinct conical half-angles in degrees, rounded to 0.1."""
+        return sorted({round(a, 1) for a in self.draft_angles_deg})
+
     @property
     def has_measurable_geometry(self):
         return self.bbox_min is not None or self.volume_mm3 is not None
@@ -169,10 +248,20 @@ class CADGeometry:
         if self.solid_count:
             lines.append("Solid bodies:    %d" % self.solid_count)
         if self.cylinder_radii:
-            lines.append("Cylindrical features (holes, bosses or rounds):")
-            lines.append("                 %d faces, diameters %s mm" % (
-                len(self.cylinder_radii),
-                ", ".join("%.2f" % d for d in self.cylindrical_diameters)))
+            lines.append("Cylindrical:     %d faces; diameters %s mm "
+                         "(holes, bosses or rounds)"
+                         % (len(self.cylinder_radii),
+                            ", ".join("%.2f" % d
+                                      for d in self.cylindrical_diameters)))
+        if self.min_wall_thickness_mm is not None:
+            lines.append("Min wall thick.: %.2f mm  (ray cast, %d samples)"
+                         % (self.min_wall_thickness_mm, self.wall_thickness_rays))
+        if self.draft_angles_deg:
+            lines.append("Conical angles:  %s deg  (draft and chamfer faces)" %
+                         ", ".join("%.1f" % a for a in self.draft_angles))
+        if self.assembly_instance_count:
+            lines.append("Assembly:        %d component instance(s), %d distinct product(s)"
+                         % (self.assembly_instance_count, self.distinct_product_count))
         if self.torus_minor_radii:
             lines.append("Fillet radii:    %s mm" %
                          ", ".join("%.2f" % r for r in self.fillet_radii))
@@ -200,6 +289,14 @@ class CADGeometry:
             'plane_count': self.plane_count,
             'solid_count': self.solid_count,
             'cylindrical_diameters_mm': self.cylindrical_diameters,
+            'min_wall_thickness_mm': self.min_wall_thickness_mm,
+            'wall_thickness_rays': self.wall_thickness_rays,
+            'cone_half_angles_deg': self.draft_angles,
+            'wall_draft_angles_deg': self.wall_draft_angles(),
+            'undrafted_wall_count': self.undrafted_wall_count(),
+            'assembly_instance_count': self.assembly_instance_count,
+            'distinct_product_count': self.distinct_product_count,
+            'part_count': self.part_count,
             'fillet_radii_mm': self.fillet_radii,
             'cone_count': self.cone_count,
             'bspline_surface_count': self.bspline_surface_count,
@@ -219,6 +316,10 @@ _NUM = r"[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[EeDd][-+]?[0-9]+)?"
 _POINT_RE = re.compile(r"\(\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*\)" % (_NUM, _NUM, _NUM))
 _RADIUS_1_RE = re.compile(r",\s*#\d+\s*,\s*(%s)" % _NUM)
 _RADIUS_2_RE = re.compile(r",\s*#\d+\s*,\s*(%s)\s*,\s*(%s)" % (_NUM, _NUM))
+_REF_RE = re.compile(r"#(\d+)")
+_CONE_RE = re.compile(
+    r"CONICAL_SURFACE\s*\(\s*'(?:[^']|'')*'\s*,\s*#\d+\s*,\s*(%s)\s*,\s*(%s)"
+    % (_NUM, _NUM))
 _QUOTED_RE = re.compile(r"'((?:[^']|'')*)'")
 
 
@@ -263,6 +364,20 @@ def _step_units(statement):
     return None
 
 
+def _step_angle_unit(statement):
+    """Return the factor converting the file's plane angle unit to degrees."""
+    if 'PLANE_ANGLE_UNIT' not in statement:
+        return None
+    if 'CONVERSION_BASED_UNIT' in statement:
+        name = _QUOTED_RE.search(statement)
+        label = name.group(1).strip().upper() if name else ''
+        if 'DEGREE' in label:
+            return 1.0
+    if 'SI_UNIT' in statement:
+        return 180.0 / math.pi  # radians
+    return None
+
+
 def read_step(path, geom):
     """Populate ``geom`` from a STEP file.  Returns ``geom``."""
     with open(path, 'r', encoding='utf-8', errors='replace') as handle:
@@ -283,10 +398,30 @@ def read_step(path, geom):
         geom.readable = True
         return geom
 
+    # A CARTESIAN_POINT may be a model vertex, or merely the origin of a
+    # surface's axis placement - and a placement origin can sit well outside
+    # the solid. Only VERTEX_POINTs bound the part, so collect those first.
+    vertex_refs = set()
+    for statement in _step_statements(data_text):
+        if 'VERTEX_POINT' not in statement:
+            continue
+        refs = _REF_RE.findall(statement)
+        # #id = VERTEX_POINT('', #point)
+        if len(refs) >= 2:
+            vertex_refs.add(refs[-1])
+
     lo = [float('inf')] * 3
     hi = [float('-inf')] * 3
     unit_scale = None
     unit_label = None
+    angle_to_degrees = None
+    product_ids = set()
+    # Reference tables, so a face can be resolved to its surface normal.
+    directions = {}
+    placements = {}
+    plane_placement = {}
+    cone_placement = {}
+    face_surfaces = []
 
     for statement in _step_statements(data_text):
         instance = _INSTANCE_RE.match(statement)
@@ -296,20 +431,52 @@ def read_step(path, geom):
             unit = _step_units(body)
             if unit:
                 unit_label, unit_scale = unit
+        if angle_to_degrees is None:
+            angle_to_degrees = _step_angle_unit(body)
 
         # Entity names present in this statement (a complex instance such as
         # "( LENGTH_UNIT() SI_UNIT(...) )" carries several).
         names = set(_ENTITY_RE.findall(body))
 
+        entity_id = instance.group(1) if instance else None
         if 'CARTESIAN_POINT' in names:
             point = _POINT_RE.search(body)
             if point:
                 coords = [_to_float(point.group(i)) for i in (1, 2, 3)]
                 if all(c is not None for c in coords):
                     geom.point_count += 1
-                    for axis in range(3):
-                        lo[axis] = min(lo[axis], coords[axis])
-                        hi[axis] = max(hi[axis], coords[axis])
+                    # Bound the part by its vertices only, unless the file
+                    # defines none (then fall back to every point).
+                    if not vertex_refs or entity_id in vertex_refs:
+                        for axis in range(3):
+                            lo[axis] = min(lo[axis], coords[axis])
+                            hi[axis] = max(hi[axis], coords[axis])
+
+        if entity_id and 'DIRECTION' in names:
+            point = _POINT_RE.search(body)
+            if point:
+                vector = [_to_float(point.group(i)) for i in (1, 2, 3)]
+                if all(v is not None for v in vector):
+                    directions[entity_id] = tuple(vector)
+        if entity_id and 'AXIS2_PLACEMENT_3D' in names:
+            refs = _REF_RE.findall(body)
+            # name, location, axis, ref_direction - the axis is the normal.
+            if len(refs) >= 2:
+                placements[entity_id] = refs[1]
+        if entity_id and 'PLANE' in names:
+            refs = _REF_RE.findall(body)
+            if refs:
+                plane_placement[entity_id] = refs[0]
+        if entity_id and 'CONICAL_SURFACE' in names:
+            refs = _REF_RE.findall(body)
+            if refs:
+                cone_placement[entity_id] = refs[0]
+        if 'ADVANCED_FACE' in names:
+            refs = _REF_RE.findall(body)
+            if refs:
+                # name, (bounds...), face_geometry, same_sense - the surface
+                # is the last reference in the argument list.
+                face_surfaces.append(refs[-1])
 
         if 'CYLINDRICAL_SURFACE' in names:
             radius = _RADIUS_1_RE.search(body)
@@ -325,6 +492,13 @@ def read_step(path, geom):
                     geom.torus_minor_radii.append(abs(minor))
         if 'CONICAL_SURFACE' in names:
             geom.cone_count += 1
+            cone = _CONE_RE.search(body)
+            if cone:
+                angle = _to_float(cone.group(2))
+                if angle is not None:
+                    # Stored raw here; converted to degrees once the file's
+                    # plane angle unit is known.
+                    geom.draft_angles_deg.append(angle)
         if 'SPHERICAL_SURFACE' in names:
             geom.sphere_count += 1
         if 'B_SPLINE_SURFACE' in names or 'BOUNDED_SURFACE' in names:
@@ -335,27 +509,56 @@ def read_step(path, geom):
             geom.face_count += 1
         if 'CLOSED_SHELL' in names or 'OPEN_SHELL' in names:
             geom.shell_count += 1
+        if 'CLOSED_SHELL' in names:
+            geom.closed_shell_count += 1
         if ('MANIFOLD_SOLID_BREP' in names
                 or 'BREP_WITH_VOIDS' in names
                 or 'FACETED_BREP' in names):
             geom.solid_count += 1
-        if 'PRODUCT' in names and geom.product_name is None:
-            name = _QUOTED_RE.search(body)
-            if name:
-                geom.product_name = name.group(1).strip() or None
+        if 'NEXT_ASSEMBLY_USAGE_OCCURRENCE' in names:
+            geom.assembly_instance_count += 1
+        if 'PRODUCT' in names:
+            if instance:
+                product_ids.add(instance.group(1))
+            if geom.product_name is None:
+                name = _QUOTED_RE.search(body)
+                if name:
+                    geom.product_name = name.group(1).strip() or None
 
     geom.units = unit_label or 'millimetre (assumed - no unit in file)'
     scale = unit_scale if unit_scale else 1.0
     geom.unit_scale_mm = scale
 
-    if geom.point_count:
+    if lo[0] != float('inf'):
         geom.bbox_min = tuple(round(v * scale, 6) for v in lo)
         geom.bbox_max = tuple(round(v * scale, 6) for v in hi)
     if scale != 1.0:
         geom.cylinder_radii = [r * scale for r in geom.cylinder_radii]
         geom.torus_minor_radii = [r * scale for r in geom.torus_minor_radii]
 
+    # Cone half-angles are stored in the file's plane angle unit, which is
+    # radians unless the file says otherwise.
+    factor = angle_to_degrees if angle_to_degrees else 180.0 / math.pi
+    geom.draft_angles_deg = [abs(a) * factor for a in geom.draft_angles_deg]
+    geom.distinct_product_count = len(product_ids)
+
+    # Resolve each face to its surface normal, so draft can be measured.
+    # Only surfaces actually used by a face are considered.
+    for surface_id in face_surfaces:
+        placement_id = plane_placement.get(surface_id)
+        if placement_id is None:
+            continue
+        normal = directions.get(placements.get(placement_id))
+        if normal:
+            geom.plane_normals.append(normal)
+
     geom.readable = True
+    if geom.assembly_instance_count > 1:
+        geom.read_notes.append(
+            "This is an assembly of %d components. The bounding box is the "
+            "union of the component geometry as defined, without applying the "
+            "assembly placement transforms, so it understates the installed "
+            "envelope." % geom.assembly_instance_count)
     if not geom.face_count and not geom.solid_count:
         geom.read_notes.append(
             "No B-rep faces or solids found - this STEP file carries no solid "
@@ -366,6 +569,89 @@ def read_step(path, geom):
 # --------------------------------------------------------------------------
 # STL parsing
 # --------------------------------------------------------------------------
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _ray_triangle(origin, direction, v0, v1, v2, epsilon=1e-9):
+    """Moller-Trumbore. Returns the distance along the ray, or None."""
+    edge1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+    edge2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+    pvec = _cross(direction, edge2)
+    det = _dot(edge1, pvec)
+    if -epsilon < det < epsilon:
+        return None
+    inv_det = 1.0 / det
+    tvec = (origin[0] - v0[0], origin[1] - v0[1], origin[2] - v0[2])
+    u = _dot(tvec, pvec) * inv_det
+    if u < 0.0 or u > 1.0:
+        return None
+    qvec = _cross(tvec, edge1)
+    v = _dot(direction, qvec) * inv_det
+    if v < 0.0 or u + v > 1.0:
+        return None
+    distance = _dot(edge2, qvec) * inv_det
+    return distance if distance > epsilon else None
+
+
+def measure_wall_thickness(triangles, max_rays=250):
+    """Measure local wall thickness by casting rays into the solid.
+
+    From the centre of a sample of faces, a ray is fired along the inward
+    normal and the distance to the first face it meets is the local wall
+    thickness there.
+
+    This samples faces rather than testing all of them, so the result is the
+    thinnest wall *found*, not a proven global minimum. Returns
+    (thickness_mm, rays_cast) or (None, 0).
+    """
+    count = len(triangles)
+    if count < 4:
+        return (None, 0)
+
+    step = max(1, count // max_rays)
+    thinnest = None
+    rays = 0
+
+    for index in range(0, count, step):
+        v0, v1, v2 = triangles[index]
+        edge1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+        edge2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+        normal = _cross(edge1, edge2)
+        length = math.sqrt(_dot(normal, normal))
+        if length == 0:
+            continue
+        normal = (normal[0] / length, normal[1] / length, normal[2] / length)
+        inward = (-normal[0], -normal[1], -normal[2])
+        centroid = ((v0[0] + v1[0] + v2[0]) / 3.0,
+                    (v0[1] + v1[1] + v2[1]) / 3.0,
+                    (v0[2] + v1[2] + v2[2]) / 3.0)
+        # Start just inside the surface so the source face is not hit.
+        origin = (centroid[0] + inward[0] * 1e-6,
+                  centroid[1] + inward[1] * 1e-6,
+                  centroid[2] + inward[2] * 1e-6)
+
+        rays += 1
+        nearest = None
+        for other in range(count):
+            if other == index:
+                continue
+            w0, w1, w2 = triangles[other]
+            distance = _ray_triangle(origin, inward, w0, w1, w2)
+            if distance is not None and (nearest is None or distance < nearest):
+                nearest = distance
+        if nearest is not None and (thinnest is None or nearest < thinnest):
+            thinnest = nearest
+
+    return (thinnest, rays)
+
 
 def _stl_is_binary(path):
     size = os.path.getsize(path)
@@ -415,8 +701,10 @@ def read_stl(path, geom):
     count = 0
     edges = {}
 
+    triangles = []
     for v0, v1, v2 in _stl_triangles(path):
         count += 1
+        triangles.append((v0, v1, v2))
         for vertex in (v0, v1, v2):
             for axis in range(3):
                 lo[axis] = min(lo[axis], vertex[axis])
@@ -453,6 +741,13 @@ def read_stl(path, geom):
     geom.surface_area_mm2 = area2 / 2.0
     geom.is_watertight = all(n == 2 for n in edges.values())
     geom.units = 'millimetre (assumed - STL carries no units)'
+    geom.triangles = triangles
+    if geom.is_watertight:
+        # Thickness is only meaningful when the mesh is closed.
+        thickness, rays = measure_wall_thickness(triangles)
+        geom.min_wall_thickness_mm = thickness
+        geom.wall_thickness_rays = rays
+
     if not geom.is_watertight:
         open_edges = sum(1 for n in edges.values() if n != 2)
         geom.read_notes.append(

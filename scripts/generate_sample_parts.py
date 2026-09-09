@@ -13,7 +13,7 @@ that the analysers have something to find:
   * a 1.5 mm pilot hole  - below the 2.0 mm CNC minimum, and far too small
     for a standard 5 mm CMM touch probe
   * five distinct hole diameters - a tool-change and inspection burden
-  * a 2.0 mm web between the slot and the edge - a thin section
+  * a thin web between the corner mounting holes and the filleted edge
 """
 
 import os
@@ -56,10 +56,38 @@ def build_bracket():
     part = part.union(upstand)
     # A through hole in the upstand, cut explicitly along +Y so it is
     # independent of which face the selector happens to pick.
+    # Start well outside the upstand (which spans y -33..-27) so the bore
+    # goes right through instead of leaving a blind pocket floor.
     bore = cq.Solid.makeCylinder(
-        5.0, 60.0, cq.Vector(0, -30.0, 15.0), cq.Vector(0, 1, 0))
+        5.0, 80.0, cq.Vector(0, -40.0, 15.0), cq.Vector(0, 1, 0))
     part = part.cut(bore)
     return part
+
+
+def build_housing():
+    """A moulded housing: tapered (drafted) walls, shelled, with fillets.
+
+    Exercises the draft-angle measurement - the 2 degree taper becomes
+    conical faces in the STEP file.
+    """
+    part = (
+        cq.Workplane('XY')
+        .rect(60.0, 40.0)
+        .extrude(20.0, taper=2.0)
+        .faces('>Z').shell(-2.0)
+    )
+    return part
+
+
+def build_assembly():
+    """Two parts in one STEP file, so the assembly structure can be read."""
+    plate = cq.Workplane('XY').box(60.0, 40.0, 5.0, centered=(True, True, False))
+    cover = cq.Workplane('XY').box(50.0, 30.0, 3.0, centered=(True, True, False))
+
+    assembly = cq.Assembly(name='Sample_Assembly')
+    assembly.add(plate, name='base_plate', loc=cq.Location(cq.Vector(0, 0, 0)))
+    assembly.add(cover, name='top_cover', loc=cq.Location(cq.Vector(0, 0, 5.0)))
+    return assembly
 
 
 def rename_product(step_path, name, description):
@@ -88,6 +116,16 @@ def main():
     rename_product(step_path, 'Sample_Bracket',
                    'Demonstration bracket with deliberate DFX issues')
     cq.exporters.export(bracket, stl_path, tolerance=0.05, angularTolerance=0.2)
+
+    housing_path = os.path.join(OUT_DIR, 'sample_housing.STEP')
+    cq.exporters.export(build_housing(), housing_path)
+    rename_product(housing_path, 'Sample_Housing',
+                   'Moulded housing with 2 degree draft')
+    print("Wrote %s" % housing_path)
+
+    assembly_path = os.path.join(OUT_DIR, 'sample_assembly.STEP')
+    build_assembly().save(assembly_path)
+    print("Wrote %s" % assembly_path)
 
     solid = bracket.val()
     print("Wrote %s" % step_path)

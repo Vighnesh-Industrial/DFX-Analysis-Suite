@@ -61,9 +61,11 @@ class TestStepReader(unittest.TestCase):
         self.assertEqual(self.geom.dimensions, (80.0, 63.0, 25.0))
 
     def test_topology_counts(self):
+        # Ground truth from OpenCASCADE reading the same file:
+        # 23 faces = 12 planes + 11 cylinders.
         self.assertEqual(self.geom.solid_count, 1)
-        self.assertEqual(self.geom.face_count, 24)
-        self.assertEqual(self.geom.plane_count, 13)
+        self.assertEqual(self.geom.face_count, 23)
+        self.assertEqual(self.geom.plane_count, 12)
 
     def test_cylindrical_features(self):
         # The bracket was authored with these diameters, plus R8 corner

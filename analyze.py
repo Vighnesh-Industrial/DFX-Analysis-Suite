@@ -39,6 +39,10 @@ def build_parser():
                         help='Write the text report to this file')
     parser.add_argument('--json', metavar='FILE',
                         help='Write machine-readable results to this JSON file')
+    parser.add_argument('--html', metavar='FILE',
+                        help='Write a printable HTML report to this file')
+    parser.add_argument('--pull', default='Z', choices=['X', 'Y', 'Z'],
+                        help='Mould pull direction for the draft check (default Z)')
     parser.add_argument('--quiet', '-q', action='store_true',
                         help='Do not print the report to the screen')
     return parser
@@ -76,8 +80,12 @@ def main(argv=None):
 
     params.setdefault('process_type', args.process)
 
+    pull = {'X': (1.0, 0.0, 0.0), 'Y': (0.0, 1.0, 0.0),
+            'Z': (0.0, 0.0, 1.0)}[args.pull]
+
     analyzer = ComprehensiveDFXAnalyzer(
-        args.cad_file, process_type=args.process, component_name=args.name)
+        args.cad_file, process_type=args.process, component_name=args.name,
+        pull_direction=pull)
     report = analyzer.generate_master_report(params)
 
     if not args.quiet:
@@ -91,6 +99,11 @@ def main(argv=None):
         with open(args.output, 'w', encoding='utf-8') as handle:
             handle.write(report)
         print("Report written to %s" % args.output)
+
+    if args.html:
+        with open(args.html, 'w', encoding='utf-8') as handle:
+            handle.write(analyzer.to_html(params))
+        print("HTML report written to %s" % args.html)
 
     if args.json:
         with open(args.json, 'w', encoding='utf-8') as handle:

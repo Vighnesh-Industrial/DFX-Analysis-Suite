@@ -220,3 +220,42 @@ print(scores['composite'], scores['dfm_violations'], scores['dfi_critical'])
 for violation in analyzer.dfm_analyzer.violations:
     print(violation['Type'], violation['Value'], '->', violation['Recommendation'])
 ```
+
+## Example 10: Draft, thickness and assembly structure
+
+```python
+from dfx_analyzers import read_cad
+
+housing = read_cad('example_parts/sample_housing.STEP')
+housing.wall_draft_angles()            # [2.0, 2.0, ...] degrees
+housing.undrafted_wall_count(1.0)      # 0
+
+# Draft depends on the pull direction, so state it
+housing.wall_draft_angles(pull=(1.0, 0.0, 0.0))
+
+mesh = read_cad('example_parts/sample_bracket.stl')
+mesh.min_wall_thickness_mm             # measured by ray casting
+mesh.wall_thickness_rays               # how many samples that came from
+
+assembly = read_cad('example_parts/sample_assembly.STEP')
+assembly.is_assembly                   # True
+assembly.part_count                    # 2, read from the file
+```
+
+## Example 11: A printable report
+
+```python
+from dfx_analyzers import ComprehensiveDFXAnalyzer
+
+analyzer = ComprehensiveDFXAnalyzer('part.STEP', process_type='injection_molding')
+html = analyzer.to_html({'num_fasteners': 4})
+
+with open('report.html', 'w', encoding='utf-8') as handle:
+    handle.write(html)
+```
+
+Or from the command line, choosing the pull direction:
+
+```bash
+python analyze.py part.STEP --process injection_molding --pull Y --html report.html
+```

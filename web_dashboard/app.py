@@ -135,10 +135,16 @@ def analyze():
         with open(report_filepath, 'w', encoding='utf-8') as handle:
             handle.write(master_report)
 
+        html_filename = 'DFX_Report_%s.html' % timestamp
+        with open(os.path.join(app.config['UPLOAD_FOLDER'], html_filename),
+                  'w', encoding='utf-8') as handle:
+            handle.write(analyzer.to_html(params))
+
         return jsonify({
             'success': True,
             'filename': filename,
             'report_filename': report_filename,
+            'html_filename': html_filename,
             'report': master_report,
             'geometry': analyzer.geometry.to_dict(),
             'scores': analyzer.scores(),

@@ -46,6 +46,7 @@ them passing rather than working around them.
 analyze.py                 CLI entry point, no dependencies
 dfx_analyzers/
   cad_reader.py            STEP + STL parsing -> CADGeometry
+  html_report.py           Printable HTML report
   dfm_analyzer.py          Manufacturability checks (geometry-driven)
   dfi_analyzer.py          Inspection checks (geometry-driven)
   dfa_analyzer.py          Assembly scoring (parameter-driven)
@@ -54,7 +55,7 @@ dfx_analyzers/
 web_dashboard/app.py       Flask upload dashboard
 scripts/                   Batch analysis, Creo export helper, sample generator
 example_parts/             sample_bracket.STEP and .stl (committed)
-tests/                     53 tests
+tests/                     70 tests
 ```
 
 ## Commands
@@ -62,7 +63,7 @@ tests/                     53 tests
 ```bash
 python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 python -m unittest discover -s tests          # no dependencies needed
-.venv/bin/python -m pytest tests/ -q          # 53 pass
+.venv/bin/python -m pytest tests/ -q          # 70 pass
 .venv/bin/python web_dashboard/app.py         # dashboard on :5000
 ```
 
@@ -73,8 +74,24 @@ python -m unittest discover -s tests          # no dependencies needed
   problems (a 1.5 mm hole, five distinct diameters). Tests assert on those
   values, so regenerating the samples means updating the expectations in
   `tests/test_cad_reader.py`.
-* The sample geometry was validated against the OpenCASCADE kernel: 24 faces,
-  13 planes, 10 cylindrical radii, and an STL volume within 0.01% of exact.
+* The sample geometry was validated against the OpenCASCADE kernel: 23 faces,
+  12 planes, 11 cylindrical radii, and an STL volume within 0.01% of exact.
+* `sample_housing.STEP` has an exact 2 degree taper and `sample_assembly.STEP`
+  has exactly 2 components. Tests assert those numbers.
+
+## Measurement invariants worth protecting
+
+* **Bounding box comes from VERTEX_POINTs only.** A CARTESIAN_POINT can be a
+  surface placement origin sitting outside the solid; including those once
+  overstated the bracket by 7 mm.
+* **Draft is measured from face normals, not from the presence of cones.**
+  Tapering a prismatic part produces slanted planes, so counting
+  CONICAL_SURFACE entities misses most real draft.
+* **Wall thickness is sampled, not exhaustive.** `measure_wall_thickness`
+  casts rays from a subset of faces, so it reports the thinnest wall found.
+  Never describe it as a proven global minimum.
+* **A check that runs and passes is a note, not a warning.** Notes carry no
+  score penalty; putting a pass in `warnings` silently costs the part 0.4.
 
 ## Adding a DFX check
 

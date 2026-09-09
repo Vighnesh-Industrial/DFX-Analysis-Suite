@@ -62,14 +62,50 @@ report when two files shared a stem, and the Creo converter called a
 * **Is tested.** 53 tests, including regression tests for the cp1252 crash and
   the checkbox parsing.
 
+## Second pass: closing the analysis gaps
+
+The first pass made the tool install, run and actually read CAD files. The
+second pass replaced the remaining proxies with real measurements:
+
+* **Draft angle** is now measured per face, by resolving each face's surface
+  normal out of the STEP file and comparing it to a pull direction you choose.
+  The previous check assumed "no conical faces means no draft", which is wrong
+  for prismatic parts: tapering a box produces slanted planes, not cones.
+  Validated on a housing modelled with an exact 2 degree taper - the tool
+  reports 2.0 degrees on all 8 wall faces, and 0.0 on the machined bracket.
+
+* **Wall thickness** is measured by casting rays from face centres along the
+  inward normal. Validated exactly: a 10 mm cube measures 9.999999 mm. This is
+  the check DFM most needed, and it caught a genuine defect in the sample part
+  while being written - the upstand bore had been cut from inside the wall,
+  leaving a 3 mm blind pocket floor instead of a through hole.
+
+* **Assembly part count** is read from the STEP assembly structure
+  (NEXT_ASSEMBLY_USAGE_OCCURRENCE), so the DFA part-reduction score no longer
+  depends on the user guessing. The bounding box still does not apply
+  component placement transforms, and the report says so.
+
+* **Bounding box accuracy.** It was computed from every CARTESIAN_POINT,
+  including surface placement origins that can lie outside the solid - which
+  overstated the bracket by 7 mm once the through bore was added. It now uses
+  VERTEX_POINTs only, and matches the authored size exactly.
+
+* **A printable HTML report**, self-contained and with no dependencies, so a
+  study can be handed to someone or printed to PDF.
+
+* **Checks that run and pass** are recorded as notes rather than warnings, so
+  passing a check no longer costs score.
+
 ## Deliberate limits
 
 The tool reports what it can measure and says when it cannot measure something.
 It does **not**:
 
-* measure true wall thickness (needs a solid-modelling kernel);
-* measure draft angle against a stated pull direction - it can only tell you
-  whether conical faces exist at all;
+* measure wall thickness directly from a STEP B-rep - export an STL alongside
+  and it is measured from that;
+* tell a hole from a boss or an external corner round;
+* apply assembly placement transforms to the bounding box;
+* detect undercuts or side actions on a moulded part;
 * read `.prt`, `.asm`, `.sldprt`, `.sldasm`, `.iges` or `.fcstd`. These are
   accepted by the uploader, and produce a report telling you to export STEP.
 
@@ -81,8 +117,7 @@ not distinguish them without full topology traversal, so they are reported as
 
 1. Distinguish holes from bosses and rounds by traversing face orientation in
    the B-rep, so the DFM messages can be more specific.
-2. Measure draft angle from `CONICAL_SURFACE` half-angles against a pull
-   direction the user picks.
-3. Assembly-level DFA: read `NEXT_ASSEMBLY_USAGE_OCCURRENCE` from a STEP
-   assembly to get a real part count instead of asking for it.
-4. PDF export, which the original README promised and no code ever provided.
+2. Undercut detection for moulded parts, now that face normals and a pull
+   direction are both available.
+3. Apply assembly placement transforms so an assembly's envelope is correct.
+4. Wall thickness from a STEP B-rep directly, rather than via an STL export.

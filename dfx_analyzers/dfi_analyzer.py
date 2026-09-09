@@ -111,10 +111,18 @@ class DFIAnalyzer:
                 % (largest, self.cmm_table_mm),
                 'Confirm machine capacity, or plan a two-setup measurement '
                 'with a datum transfer.')
-        if smallest is not None and smallest < 1.0:
+        # Prefer a measured wall thickness over the bounding box.
+        measured = geom.min_wall_thickness_mm
+        if measured is not None and measured < 2.0:
             self.add_warning(
                 name, 'Fragile section',
-                'Thinnest dimension is %.2f mm.' % smallest,
+                'Thinnest measured wall is %.2f mm.' % measured,
+                'Thin walls deflect under probe force. Reduce probing force '
+                'or measure them optically.')
+        elif measured is None and smallest is not None and smallest < 1.0:
+            self.add_warning(
+                name, 'Fragile section',
+                'Thinnest envelope dimension is %.2f mm.' % smallest,
                 'Thin sections deflect under probe force. Reduce probing '
                 'force or use non-contact measurement.')
 
