@@ -145,6 +145,7 @@ def run_analysis(job, filepath, filename, params, timestamp):
         'report': master_report,
         'geometry': analyzer.geometry.to_dict(),
         'scores': analyzer.scores(),
+        'components': analyzer.findings_by_component(),
         'views': views,
         'view_note': analyzer.view_note(),
         'timestamp': timestamp,

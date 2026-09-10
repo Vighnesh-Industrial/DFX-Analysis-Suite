@@ -58,7 +58,7 @@ web_dashboard/app.py       Flask dashboard; queues analyses as background jobs
 web_dashboard/jobs.py      Thread-backed job runner with progress reporting
 scripts/                   Batch analysis, Creo export helper, sample generator
 example_parts/             sample_bracket.STEP and .stl (committed)
-tests/                     109 tests
+tests/                     118 tests
 ```
 
 ## Commands
@@ -66,7 +66,7 @@ tests/                     109 tests
 ```bash
 python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 python -m unittest discover -s tests          # no dependencies needed
-.venv/bin/python -m pytest tests/ -q          # 109 pass
+.venv/bin/python -m pytest tests/ -q          # 118 pass
 .venv/bin/python web_dashboard/app.py         # dashboard on :5000
 ```
 
@@ -101,6 +101,11 @@ python -m unittest discover -s tests          # no dependencies needed
   as a good part. `geometry_measured` in the same dict says which it was.
 * **Views are never faked.** `render_views` returns only the views the file
   can actually supply; `render_note` explains any absence.
+* **Geometry checks run per component, not per file.** `ComprehensiveDFXAnalyzer.subjects`
+  is the assembly's components when there are any, otherwise the model itself.
+  DFM and DFI findings carry the component's label in their `Part` field, and
+  the DFM/DFI scores are the mean across components so that adding parts does
+  not by itself lower the score. Serviceability stays assembly-level.
 * **Assembly components must be placed before measuring.** Component geometry
   lives in each component's own frame; skipping the placement chain piled the
   parts on the origin and measured a 28 mm stack as 5 mm. `components_placed`

@@ -134,6 +134,28 @@ def build_html(analyzer, include_views=True):
             rows.append('<tr><td colspan="2">%s</td></tr>' % escape(line.strip()))
     geometry_table = '<table>%s</table>' % ''.join(rows)
 
+    components_html = ''
+    if getattr(analyzer, 'is_assembly', False):
+        tally = analyzer.findings_by_component()
+        rows = ['<tr><th style="width:34%">Component</th>'
+                '<th style="width:33%">Envelope (mm)</th>'
+                '<th>Findings</th></tr>']
+        for subject in analyzer.subjects:
+            dims = subject.dimensions
+            size = ('%.1f x %.1f x %.1f' % dims) if dims else 'not measurable'
+            counts = tally.get(subject.label, {})
+            blocking = counts.get('violations', 0) + counts.get('critical', 0)
+            warnings = counts.get('warnings', 0) + counts.get('dfi_warnings', 0)
+            summary = '%d blocking, %d warning%s' % (
+                blocking, warnings, '' if warnings == 1 else 's')
+            rows.append('<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td></tr>'
+                        % (escape(subject.label), escape(size), escape(summary)))
+        components_html = (
+            '<h2>Components</h2>'
+            '<p class="sub">Manufacturability and inspection are checked per '
+            'component; every finding below names the component it came '
+            'from.</p><table>%s</table>' % ''.join(rows))
+
     notes = ''.join('<div class="finding info"><span class="tag info">NOTE</span>%s</div>'
                     % escape(note) for note in geom.read_notes)
 
@@ -175,6 +197,8 @@ def build_html(analyzer, include_views=True):
 %(geometry)s
 %(notes)s
 
+%(components)s
+
 %(dfm)s
 %(dfi)s
 %(dfs)s
@@ -199,6 +223,7 @@ file - not that every check passed.
         'views': views_html,
         'geometry': geometry_table,
         'notes': notes,
+        'components': components_html,
         'dfm': _section('DFM - Design for Manufacturability', dfm,
                         'No manufacturability findings from the checks that could be run.'),
         'dfi': _section('DFI - Design for Inspection', dfi,

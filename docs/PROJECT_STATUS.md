@@ -133,6 +133,24 @@ second pass replaced the remaining proxies with real measurements:
   so anyone cloning the repository still got the original broken code. The
   branch was merged into `main` on request.
 
+## Fifth pass: per-component findings
+
+An assembly was analysed as a single body, so a finding named the assembly
+and gave no clue which component to fix. Components are now measured
+separately - the reader attributes every geometry entity to the component
+whose shape representation reaches it, and recovers each component's name by
+walking back to its PRODUCT - and the manufacturability and inspection checks
+run per component. Serviceability stays assembly-level, because a component
+is what you make and an assembly is what you service.
+
+The DFM and DFI scores became the mean across components rather than a single
+running deduction: otherwise a ten-part assembly scored worse than a five-part
+one simply for having more parts to find things in.
+
+On the question of PDF: a PDF would carry exactly the same content as the
+HTML report. It is a container, not another source of data, and the HTML
+report already prints to PDF from any browser. No PDF exporter was added.
+
 ## Deliberate limits
 
 The tool reports what it can measure and says when it cannot measure something.
@@ -157,6 +175,4 @@ not distinguish them without full topology traversal, so they are reported as
 2. Hidden-line removal for the STEP wireframe views.
 3. Undercut detection for moulded parts, now that face normals and a pull
    direction are both available.
-4. Per-component findings for an assembly, so a finding names the component
-   rather than the whole assembly.
-5. Wall thickness from a STEP B-rep directly, rather than via an STL export.
+4. Wall thickness from a STEP B-rep directly, rather than via an STL export.

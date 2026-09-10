@@ -112,3 +112,74 @@ class TestAssemblyPlacement(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestPerComponentMeasurement(unittest.TestCase):
+    """Each component is measured in its own right, in assembly coordinates."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.geom = read_cad(ASSEMBLY)
+
+    def test_each_component_is_measured_separately(self):
+        by_name = {c.label: c for c in self.geom.components}
+        self.assertEqual(set(by_name), {'base_plate', 'top_cover', 'riser_post'})
+        # Authored sizes, with the post rotated 90 degrees about X.
+        self.assertEqual(by_name['base_plate'].dimensions, (60.0, 40.0, 5.0))
+        self.assertEqual(by_name['top_cover'].dimensions, (50.0, 30.0, 3.0))
+        self.assertEqual(by_name['riser_post'].dimensions, (10.0, 10.0, 20.0))
+
+    def test_each_component_is_a_single_closed_solid(self):
+        for component in self.geom.components:
+            self.assertEqual(component.solid_count, 1)
+            self.assertEqual(component.face_count, 6)
+
+    def test_a_single_part_has_no_components(self):
+        self.assertEqual(read_cad(BRACKET).components, [])
+
+
+class TestPerComponentFindings(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        from dfx_analyzers import ComprehensiveDFXAnalyzer
+        cls.analyzer = ComprehensiveDFXAnalyzer(
+            ASSEMBLY, process_type='injection_molding')
+        cls.report = cls.analyzer.generate_master_report({'num_fasteners': 6})
+
+    def test_findings_name_the_component_not_the_assembly(self):
+        parts = {v['Part'] for v in self.analyzer.dfm_analyzer.violations}
+        self.assertTrue(parts)
+        self.assertIn('riser_post', parts)
+        self.assertNotIn('Sample_Assembly', parts)
+
+    def test_every_component_is_checked(self):
+        tally = self.analyzer.findings_by_component()
+        self.assertEqual(set(tally),
+                         {'base_plate', 'top_cover', 'riser_post'})
+
+    def test_report_carries_a_component_breakdown(self):
+        self.assertIn('COMPONENTS', self.report)
+        for name in ('base_plate', 'top_cover', 'riser_post'):
+            self.assertIn(name, self.report)
+        self.report.encode('cp1252')
+
+    def test_score_is_the_mean_across_components(self):
+        """Adding components must not by itself lower the score."""
+        tally = self.analyzer.findings_by_component()
+        expected = []
+        for counts in tally.values():
+            expected.append(max(0.0, 10.0 - counts['violations'] * 1.5
+                                - counts['warnings'] * 0.4))
+        self.assertAlmostEqual(self.analyzer.scores()['dfm'],
+                               sum(expected) / len(expected), places=6)
+
+    def test_serviceability_stays_assembly_level(self):
+        parts = {i['Component']
+                 for i in self.analyzer.dfs_analyzer.serviceability_issues}
+        self.assertIn('Sample_Assembly', parts)
+
+    def test_html_report_lists_the_components(self):
+        html = self.analyzer.to_html({})
+        self.assertIn('Components', html)
+        self.assertIn('riser_post', html)

@@ -57,7 +57,8 @@ wireframes with proper arcs for holes and fillets; STL files render shaded.
 python analyze.py example_parts/sample_bracket.STEP --html report.html
 ```
 
-Open `report.html` in any browser and print it to PDF. The dashboard offers
+Open `report.html` in any browser and print it to PDF (**Ctrl+P**, then
+*Save as PDF*) - it carries a print stylesheet for exactly that. The dashboard offers
 the same file under **Download Printable Report**.
 
 If the geometry block says *"none measurable"*, the file you passed has no

@@ -45,6 +45,7 @@ class CADGeometry:
 
     file_path: str = ''
     file_name: str = ''
+    name: str = None
     file_format: str = 'UNKNOWN'
     readable: bool = False
     read_notes: list = field(default_factory=list)
@@ -74,6 +75,8 @@ class CADGeometry:
     # Assembly structure (STEP)
     assembly_instance_count: int = 0
     components_placed: bool = False
+    # Per-component geometry, measured separately, for an assembly.
+    components: list = field(default_factory=list, repr=False)
     distinct_product_count: int = 0
 
     # Measured draft angles (STEP conical faces), degrees from the axis
@@ -179,6 +182,11 @@ class CADGeometry:
     def has_solid_body(self):
         """True when the file carries a closed body, solid or surface model."""
         return bool(self.solid_count or self.closed_shell_count)
+
+    @property
+    def label(self):
+        """Best available name for this part or component."""
+        return self.name or self.product_name or self.file_name or 'Component'
 
     @property
     def is_assembly(self):
@@ -301,6 +309,12 @@ class CADGeometry:
             'undrafted_wall_count': self.undrafted_wall_count(),
             'assembly_instance_count': self.assembly_instance_count,
             'components_placed': self.components_placed,
+            'components': [
+                {'name': component.label,
+                 'dimensions_mm': component.dimensions,
+                 'face_count': component.face_count,
+                 'cylindrical_diameters_mm': component.cylindrical_diameters}
+                for component in self.components],
             'distinct_product_count': self.distinct_product_count,
             'part_count': self.part_count,
             'fillet_radii_mm': self.fillet_radii,
@@ -385,7 +399,12 @@ def _step_angle_unit(statement):
 
 
 def read_step(path, geom):
-    """Populate ``geom`` from a STEP file.  Returns ``geom``."""
+    """Populate ``geom`` from a STEP file.  Returns ``geom``.
+
+    For an assembly, each component is also measured separately into
+    ``geom.components`` so that findings can name the component they came
+    from rather than the assembly as a whole.
+    """
     with open(path, 'r', encoding='utf-8', errors='replace') as handle:
         text = handle.read()
 
@@ -421,8 +440,23 @@ def read_step(path, geom):
     from .step_assembly import read_step_assembly
     placement = read_step_assembly(path, _step_statements(data_text))
 
-    lo = [float('inf')] * 3
-    hi = [float('-inf')] * 3
+    # targets[0] is the whole model; the rest are its components. Every
+    # measurement is tallied into the model and into the component it
+    # belongs to.
+    targets = [geom]
+    rep_index = {}
+    for rep_id in placement.component_reps:
+        component = CADGeometry(file_path=geom.file_path,
+                                file_name=geom.file_name,
+                                file_format=geom.file_format)
+        component.name = placement.name_of(
+            rep_id, 'Component %d' % (len(targets)))
+        component.product_name = component.name
+        component.readable = True
+        rep_index[rep_id] = len(targets)
+        targets.append(component)
+
+    bounds = [[[float('inf')] * 3, [float('-inf')] * 3] for _ in targets]
     unit_scale = None
     unit_label = None
     angle_to_degrees = None
@@ -431,12 +465,12 @@ def read_step(path, geom):
     directions = {}
     placements = {}
     plane_placement = {}
-    cone_placement = {}
     face_surfaces = []
 
     for statement in _step_statements(data_text):
         instance = _INSTANCE_RE.match(statement)
         body = instance.group(2) if instance else statement
+        entity_id = instance.group(1) if instance else None
 
         if unit_scale is None:
             unit = _step_units(body)
@@ -449,20 +483,29 @@ def read_step(path, geom):
         # "( LENGTH_UNIT() SI_UNIT(...) )" carries several).
         names = set(_ENTITY_RE.findall(body))
 
-        entity_id = instance.group(1) if instance else None
+        # Which targets this entity counts towards.
+        indices = [0]
+        if entity_id is not None:
+            owner = rep_index.get(placement.rep_of(entity_id))
+            if owner is not None:
+                indices.append(owner)
+
         if 'CARTESIAN_POINT' in names:
             point = _POINT_RE.search(body)
             if point:
                 coords = [_to_float(point.group(i)) for i in (1, 2, 3)]
                 if all(c is not None for c in coords):
-                    geom.point_count += 1
+                    for index in indices:
+                        targets[index].point_count += 1
                     # Bound the part by its vertices only, unless the file
                     # defines none (then fall back to every point).
                     if not vertex_refs or entity_id in vertex_refs:
                         located = placement.place(entity_id, tuple(coords))
-                        for axis in range(3):
-                            lo[axis] = min(lo[axis], located[axis])
-                            hi[axis] = max(hi[axis], located[axis])
+                        for index in indices:
+                            low, high = bounds[index]
+                            for axis in range(3):
+                                low[axis] = min(low[axis], located[axis])
+                                high[axis] = max(high[axis], located[axis])
 
         if entity_id and 'DIRECTION' in names:
             point = _POINT_RE.search(body)
@@ -479,54 +522,59 @@ def read_step(path, geom):
             refs = _REF_RE.findall(body)
             if refs:
                 plane_placement[entity_id] = refs[0]
-        if entity_id and 'CONICAL_SURFACE' in names:
-            refs = _REF_RE.findall(body)
-            if refs:
-                cone_placement[entity_id] = refs[0]
         if 'ADVANCED_FACE' in names:
             refs = _REF_RE.findall(body)
             if refs:
                 # name, (bounds...), face_geometry, same_sense - the surface
                 # is the last reference in the argument list.
-                face_surfaces.append(refs[-1])
+                face_surfaces.append((refs[-1], tuple(indices)))
 
         if 'CYLINDRICAL_SURFACE' in names:
             radius = _RADIUS_1_RE.search(body)
             if radius:
                 value = _to_float(radius.group(1))
                 if value is not None:
-                    geom.cylinder_radii.append(value)
+                    for index in indices:
+                        targets[index].cylinder_radii.append(value)
         if 'TOROIDAL_SURFACE' in names:
             radii = _RADIUS_2_RE.search(body)
             if radii:
                 minor = _to_float(radii.group(2))
                 if minor is not None:
-                    geom.torus_minor_radii.append(abs(minor))
+                    for index in indices:
+                        targets[index].torus_minor_radii.append(abs(minor))
         if 'CONICAL_SURFACE' in names:
-            geom.cone_count += 1
             cone = _CONE_RE.search(body)
-            if cone:
-                angle = _to_float(cone.group(2))
+            angle = _to_float(cone.group(2)) if cone else None
+            for index in indices:
+                targets[index].cone_count += 1
                 if angle is not None:
                     # Stored raw here; converted to degrees once the file's
                     # plane angle unit is known.
-                    geom.draft_angles_deg.append(angle)
+                    targets[index].draft_angles_deg.append(angle)
         if 'SPHERICAL_SURFACE' in names:
-            geom.sphere_count += 1
+            for index in indices:
+                targets[index].sphere_count += 1
         if 'B_SPLINE_SURFACE' in names or 'BOUNDED_SURFACE' in names:
-            geom.bspline_surface_count += 1
+            for index in indices:
+                targets[index].bspline_surface_count += 1
         if 'PLANE' in names:
-            geom.plane_count += 1
+            for index in indices:
+                targets[index].plane_count += 1
         if 'ADVANCED_FACE' in names or 'FACE_SURFACE' in names:
-            geom.face_count += 1
+            for index in indices:
+                targets[index].face_count += 1
         if 'CLOSED_SHELL' in names or 'OPEN_SHELL' in names:
-            geom.shell_count += 1
+            for index in indices:
+                targets[index].shell_count += 1
         if 'CLOSED_SHELL' in names:
-            geom.closed_shell_count += 1
+            for index in indices:
+                targets[index].closed_shell_count += 1
         if ('MANIFOLD_SOLID_BREP' in names
                 or 'BREP_WITH_VOIDS' in names
                 or 'FACETED_BREP' in names):
-            geom.solid_count += 1
+            for index in indices:
+                targets[index].solid_count += 1
         if 'NEXT_ASSEMBLY_USAGE_OCCURRENCE' in names:
             geom.assembly_instance_count += 1
         if 'PRODUCT' in names:
@@ -537,35 +585,41 @@ def read_step(path, geom):
                 if name:
                     geom.product_name = name.group(1).strip() or None
 
-    geom.units = unit_label or 'millimetre (assumed - no unit in file)'
     scale = unit_scale if unit_scale else 1.0
-    geom.unit_scale_mm = scale
-
-    if lo[0] != float('inf'):
-        geom.bbox_min = tuple(round(v * scale, 6) for v in lo)
-        geom.bbox_max = tuple(round(v * scale, 6) for v in hi)
-    if scale != 1.0:
-        geom.cylinder_radii = [r * scale for r in geom.cylinder_radii]
-        geom.torus_minor_radii = [r * scale for r in geom.torus_minor_radii]
-
-    # Cone half-angles are stored in the file's plane angle unit, which is
-    # radians unless the file says otherwise.
     factor = angle_to_degrees if angle_to_degrees else 180.0 / math.pi
-    geom.draft_angles_deg = [abs(a) * factor for a in geom.draft_angles_deg]
+
+    for index, target in enumerate(targets):
+        target.units = unit_label or 'millimetre (assumed - no unit in file)'
+        target.unit_scale_mm = scale
+        low, high = bounds[index]
+        if low[0] != float('inf'):
+            target.bbox_min = tuple(round(v * scale, 6) for v in low)
+            target.bbox_max = tuple(round(v * scale, 6) for v in high)
+        if scale != 1.0:
+            target.cylinder_radii = [r * scale for r in target.cylinder_radii]
+            target.torus_minor_radii = [r * scale
+                                        for r in target.torus_minor_radii]
+        # Cone half-angles are stored in the file's plane angle unit, which
+        # is radians unless the file says otherwise.
+        target.draft_angles_deg = [abs(a) * factor
+                                   for a in target.draft_angles_deg]
+
     geom.distinct_product_count = len(product_ids)
 
     # Resolve each face to its surface normal, so draft can be measured.
     # Only surfaces actually used by a face are considered.
-    for surface_id in face_surfaces:
+    for surface_id, indices in face_surfaces:
         placement_id = plane_placement.get(surface_id)
         if placement_id is None:
             continue
         normal = directions.get(placements.get(placement_id))
         if normal:
-            geom.plane_normals.append(normal)
+            for index in indices:
+                targets[index].plane_normals.append(normal)
 
     geom.readable = True
     geom.components_placed = bool(placement.component_reps)
+    geom.components = targets[1:]
     if geom.assembly_instance_count > 1 and not geom.components_placed:
         geom.read_notes.append(
             "This is an assembly of %d components, but no placement "

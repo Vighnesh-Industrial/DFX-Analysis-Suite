@@ -40,6 +40,43 @@ class ComprehensiveDFXAnalyzer:
         self.dfs_analyzer = DFSAnalyzer()
         self.results = {}
 
+    @property
+    def subjects(self):
+        """What the geometry checks run against.
+
+        An assembly's components, when they could be separated; otherwise the
+        model as a whole.
+        """
+        return self.geometry.components or [self.geometry]
+
+    @property
+    def is_assembly(self):
+        return len(self.geometry.components) > 1
+
+    def findings_by_component(self):
+        """Finding counts per component, keyed by component label."""
+        tally = {}
+        for subject in self.subjects:
+            tally[subject.label] = {'violations': 0, 'warnings': 0,
+                                    'critical': 0, 'dfi_warnings': 0}
+        for item in self.dfm_analyzer.violations:
+            entry = tally.get(item['Part'])
+            if entry:
+                entry['violations'] += 1
+        for item in self.dfm_analyzer.warnings:
+            entry = tally.get(item['Part'])
+            if entry:
+                entry['warnings'] += 1
+        for item in self.dfi_analyzer.inspection_issues:
+            entry = tally.get(item['Part'])
+            if not entry:
+                continue
+            if item['Type'] == 'CRITICAL':
+                entry['critical'] += 1
+            elif item['Type'] == 'WARNING':
+                entry['dfi_warnings'] += 1
+        return tally
+
     # -------------------------------------------------------------- analysis
 
     def run_all_analyses(self, component_params):
@@ -61,8 +98,12 @@ class ComprehensiveDFXAnalyzer:
         dfa_params = {k: v for k, v in params.items()
                       if k not in ('density_g_cm3',)}
 
-        self.dfm_analyzer.analyze_geometry(self.geometry, self.component_name)
-        self.dfi_analyzer.analyze_geometry(self.geometry, self.component_name)
+        # You manufacture and inspect components, not assemblies, so the
+        # geometry checks run per component and each finding names the
+        # component it came from. Serviceability stays assembly-level.
+        for subject in self.subjects:
+            self.dfm_analyzer.analyze_geometry(subject, subject.label)
+            self.dfi_analyzer.analyze_geometry(subject, subject.label)
         self.dfs_analyzer.analyze(self.geometry, params, self.component_name)
 
         results = {
@@ -91,10 +132,18 @@ class ComprehensiveDFXAnalyzer:
         # file there is no score to give: reporting 10 minus a couple of
         # warnings would say the part passed checks that never ran.
         if self.geometry.has_measurable_geometry:
-            dfm_score = max(0.0, 10.0 - violations * PENALTY['violation']
-                            - dfm_warnings * PENALTY['warning'])
-            dfi_score = max(0.0, 10.0 - criticals * PENALTY['critical']
-                            - dfi_warnings * PENALTY['warning'])
+            # For an assembly, score each component and average, so one bad
+            # part does not drag three good ones to the floor - and so the
+            # number of components does not by itself lower the score.
+            per_component = self.findings_by_component()
+            dfm_parts = [max(0.0, 10.0 - counts['violations'] * PENALTY['violation']
+                             - counts['warnings'] * PENALTY['warning'])
+                         for counts in per_component.values()]
+            dfi_parts = [max(0.0, 10.0 - counts['critical'] * PENALTY['critical']
+                             - counts['dfi_warnings'] * PENALTY['warning'])
+                         for counts in per_component.values()]
+            dfm_score = sum(dfm_parts) / len(dfm_parts) if dfm_parts else None
+            dfi_score = sum(dfi_parts) / len(dfi_parts) if dfi_parts else None
         else:
             dfm_score = None
             dfi_score = None
@@ -128,6 +177,7 @@ class ComprehensiveDFXAnalyzer:
             'generated_at': datetime.now().isoformat(timespec='seconds'),
             'geometry': self.geometry.to_dict(),
             'scores': self.scores(),
+            'components': self.findings_by_component(),
             'dfm_violations': self.dfm_analyzer.violations,
             'dfm_warnings': self.dfm_analyzer.warnings,
             'dfi_findings': self.dfi_analyzer.inspection_issues,
@@ -159,6 +209,32 @@ class ComprehensiveDFXAnalyzer:
         return self._view_note
 
     # ---------------------------------------------------------------- report
+
+    def _components_section(self):
+        """Per-component breakdown, for an assembly."""
+        if not self.is_assembly:
+            return ''
+        tally = self.findings_by_component()
+        lines = ["\n%s\nCOMPONENTS\n%s\n" % (RULE, RULE), ""]
+        lines.append("  %-24s %-22s %s" % ('Component', 'Envelope (mm)',
+                                           'Findings'))
+        lines.append("  " + "-" * 70)
+        for subject in self.subjects:
+            dims = subject.dimensions
+            size = ("%.1f x %.1f x %.1f" % dims) if dims else 'not measurable'
+            counts = tally.get(subject.label, {})
+            findings = ("%d violation(s), %d critical, %d warning(s)"
+                        % (counts.get('violations', 0),
+                           counts.get('critical', 0),
+                           counts.get('warnings', 0)
+                           + counts.get('dfi_warnings', 0)))
+            lines.append("  %-24s %-22s %s"
+                         % (subject.label[:24], size, findings))
+        lines.append("")
+        lines.append("  Manufacturability and inspection are checked per "
+                     "component; every")
+        lines.append("  finding below names the component it came from.")
+        return "\n".join(lines) + "\n"
 
     def _geometry_section(self):
         lines = ["\n%s\nMEASURED GEOMETRY\nRead directly from the CAD file\n%s\n" % (RULE, RULE), ""]
@@ -239,6 +315,7 @@ class ComprehensiveDFXAnalyzer:
 
         return (header
                 + self._geometry_section()
+                + self._components_section()
                 + all_results['DFA']
                 + all_results['DFM']
                 + all_results['DFI']

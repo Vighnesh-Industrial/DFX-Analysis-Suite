@@ -102,6 +102,27 @@ The part count used by the DFA score is read from the file's
 cannot be resolved, the report says so instead of quietly reporting a wrong
 envelope.
 
+**Findings are per component.** You manufacture and inspect components, not
+assemblies, so each component is measured in its own right and every DFM and
+DFI finding names the component it came from:
+
+```
+COMPONENTS
+
+  Component                Envelope (mm)          Findings
+  ----------------------------------------------------------------------
+  top_cover                50.0 x 30.0 x 3.0      1 violation(s), 0 critical, 2 warning(s)
+  base_plate               60.0 x 40.0 x 5.0      1 violation(s), 0 critical, 1 warning(s)
+  riser_post               10.0 x 10.0 x 20.0     1 violation(s), 0 critical, 1 warning(s)
+
+  [FAIL] riser_post - Insufficient draft: 4 of 4 wall faces at 0.0 deg or less
+```
+
+The DFM and DFI scores are the **mean across components**, so adding parts to
+an assembly does not by itself lower the score, and one bad component does not
+drag good ones to the floor. Serviceability stays assembly-level, because that
+is what you service.
+
 ---
 
 ## What the tool actually measures
@@ -276,6 +297,14 @@ CRITICAL (1):
 Report text is plain ASCII on purpose, so it survives a Windows console and a
 `cp1252` file handle.
 
+### Getting a PDF
+
+Open the HTML report and print it (**Ctrl+P**, then *Save as PDF*). The page
+carries a print stylesheet that drops the page chrome, so it prints cleanly.
+A PDF holds exactly the same information as the HTML report - it is a
+container, not an extra source of data - so there is no separate PDF export
+to install or maintain.
+
 ---
 
 ## Project layout
@@ -304,7 +333,7 @@ scripts/
   generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
 example_parts/              sample_bracket (STEP+STL), sample_housing
                             (drafted), sample_assembly (3 placed parts)
-tests/                      109 tests
+tests/                      118 tests
 docs/                       Installation, Creo integration, examples
 ```
 
@@ -317,7 +346,7 @@ python -m unittest discover -s tests     # no dependencies needed
 .venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
-109 tests. The 17 web-dashboard tests skip automatically when Flask is not
+118 tests. The 17 web-dashboard tests skip automatically when Flask is not
 installed.
 
 ---
@@ -343,8 +372,6 @@ Honest list of what is *not* implemented yet:
 * Telling a hole from a boss or an external round. A STEP cylindrical face
   does not say which it is without full topology traversal, so they are
   reported together as "cylindrical features".
-* Per-component findings for an assembly: it is analysed as one body, so a
-  finding names the assembly rather than the component it came from.
 * Undercut and side-action detection for moulded parts.
 
 ---

@@ -127,11 +127,20 @@ class AssemblyPlacement:
     def __init__(self):
         self.transforms = {}        # rep id -> world transform
         self.point_rep = {}         # cartesian point id -> rep id
+        self.entity_rep = {}        # any geometry entity id -> rep id
         self.component_reps = []    # rep ids that are placed components
+        self.names = {}             # rep id -> component product name
 
     @property
     def is_assembly(self):
         return len(self.component_reps) > 1
+
+    def rep_of(self, entity_id):
+        """Which component an entity belongs to, or None."""
+        return self.entity_rep.get(entity_id)
+
+    def name_of(self, rep_id, fallback=None):
+        return self.names.get(rep_id) or fallback
 
     def transform_for_point(self, point_id):
         rep = self.point_rep.get(point_id)
@@ -168,6 +177,8 @@ def read_step_assembly(path, statements, max_bytes=MAX_ASSEMBLY_FILE_BYTES):
     directions = {}
     placements = {}            # axis placement id -> (origin, axis, ref) ids
     reps = {}                  # rep id -> item ids
+    product_names = {}         # product id -> name
+    shape_definitions = []     # (product definition shape id, rep id)
     graph = {}                 # any id -> ids it references
     kinds = {}                 # id -> set of entity names
     relationships = []         # (child_rep, parent_rep, transform_id)
@@ -203,6 +214,12 @@ def read_step_assembly(path, statements, max_bytes=MAX_ASSEMBLY_FILE_BYTES):
 
         if names & set(_SHAPE_REP_NAMES):
             reps[entity_id] = refs
+        if 'PRODUCT' in names:
+            quoted = re.search(r"'((?:[^']|'')*)'", body)
+            if quoted:
+                product_names[entity_id] = quoted.group(1).strip()
+        if 'SHAPE_DEFINITION_REPRESENTATION' in names and len(refs) >= 2:
+            shape_definitions.append((refs[0], refs[1]))
         if 'ITEM_DEFINED_TRANSFORMATION' in names:
             found = _ITEM_TRANSFORM_RE.search(body)
             if found:
@@ -251,9 +268,9 @@ def read_step_assembly(path, statements, max_bytes=MAX_ASSEMBLY_FILE_BYTES):
         placement.transforms[rep_id] = world_transform(rep_id)
     placement.component_reps = sorted(parents)
 
-    # Assign points to the component whose geometry reaches them. Bare axis
+    # Assign geometry to the component whose shape reaches it. Bare axis
     # placements are skipped: the identity placement is shared between the
-    # root and its components, and would otherwise claim their points.
+    # root and its components, and would otherwise claim their geometry.
     for rep_id in placement.component_reps + [r for r in reps if r not in parents]:
         seeds = [item for item in reps.get(rep_id, ())
                  if 'AXIS2_PLACEMENT_3D' not in kinds.get(item, ())]
@@ -264,9 +281,27 @@ def read_step_assembly(path, statements, max_bytes=MAX_ASSEMBLY_FILE_BYTES):
             if current in visited:
                 continue
             visited.add(current)
+            placement.entity_rep.setdefault(current, rep_id)
             if current in points:
                 placement.point_rep.setdefault(current, rep_id)
                 continue
+            stack.extend(graph.get(current, ()))
+
+    # Name each component, by walking from its shape representation back to
+    # the PRODUCT that defines it.
+    for definition_id, rep_id in shape_definitions:
+        if rep_id not in reps:
+            continue
+        stack = [definition_id]
+        seen = set()
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if current in product_names:
+                placement.names[rep_id] = product_names[current]
+                break
             stack.extend(graph.get(current, ()))
 
     return placement

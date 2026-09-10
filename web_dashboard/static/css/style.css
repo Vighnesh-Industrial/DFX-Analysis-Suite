@@ -82,3 +82,21 @@ select {
     width: 100%;
     height: auto;
 }
+
+.component-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.component-table th,
+.component-table td {
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.component-table th {
+    color: #4a5568;
+    font-weight: 600;
+}

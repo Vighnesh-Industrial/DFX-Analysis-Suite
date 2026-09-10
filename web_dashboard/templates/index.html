@@ -119,6 +119,14 @@
         <h2>Analysis Results</h2>
         <div id="scoreGrid" class="score-grid"></div>
         <div id="viewGallery" class="view-gallery"></div>
+        <div id="componentPanel" style="display:none; margin-bottom:1.5rem;">
+            <h3 style="font-size:1rem; margin-bottom:0.5rem;">Components</h3>
+            <p style="color:#718096; font-size:0.85rem; margin-bottom:0.75rem;">
+                Manufacturability and inspection are checked per component;
+                every finding in the report names the component it came from.
+            </p>
+            <table id="componentTable" class="component-table"></table>
+        </div>
         <p id="viewNote" style="color:#718096; font-size:0.85rem;"></p>
         <pre id="resultText" style="background: #f5f5f5; padding: 1.5rem; border-radius: 5px; overflow-x: auto; font-size: 0.85rem; line-height: 1.4;"></pre>
         
@@ -162,6 +170,7 @@ function showResult(data) {
 
     renderScores(data.scores);
     renderViews(data.views, data.view_note);
+    renderComponents(data.geometry, data.components);
     document.getElementById('resultText').textContent = data.report;
     document.getElementById('loadingIndicator').style.display = 'none';
     document.getElementById('resultContainer').style.display = 'block';
@@ -231,6 +240,45 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
         failed('Error uploading file: ' + error);
     }
 });
+
+function renderComponents(geometry, findings) {
+    const panel = document.getElementById('componentPanel');
+    const table = document.getElementById('componentTable');
+    const components = (geometry && geometry.components) || [];
+    if (components.length < 2) {
+        panel.style.display = 'none';
+        return;
+    }
+    const header = document.createElement('tr');
+    ['Component', 'Envelope (mm)', 'Findings'].forEach((label) => {
+        const cell = document.createElement('th');
+        cell.textContent = label;
+        header.appendChild(cell);
+    });
+    table.innerHTML = '';
+    table.appendChild(header);
+
+    components.forEach((component) => {
+        const counts = (findings && findings[component.name]) || {};
+        const blocking = (counts.violations || 0) + (counts.critical || 0);
+        const warnings = (counts.warnings || 0) + (counts.dfi_warnings || 0);
+        const dims = component.dimensions_mm;
+        const row = document.createElement('tr');
+        [component.name,
+         dims ? dims.map((d) => d.toFixed(1)).join(' x ') : 'not measurable',
+         blocking + ' blocking, ' + warnings + ' warning' + (warnings === 1 ? '' : 's')
+        ].forEach((text, index) => {
+            const cell = document.createElement('td');
+            cell.textContent = text;
+            if (index === 0) {
+                cell.style.fontWeight = '600';
+            }
+            row.appendChild(cell);
+        });
+        table.appendChild(row);
+    });
+    panel.style.display = 'block';
+}
 
 function renderViews(views, note) {
     const gallery = document.getElementById('viewGallery');
