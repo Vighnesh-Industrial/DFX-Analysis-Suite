@@ -91,6 +91,7 @@ class CADGeometry:
     wall_thickness_rays: int = 0
 
     # Mesh measurements (STL)
+    overhang_area_mm2: float = None
     mesh_source: str = None
     triangles: list = field(default_factory=list, repr=False)
     triangle_count: int = 0
@@ -124,6 +125,13 @@ class CADGeometry:
         if not dims or min(dims) <= 0:
             return None
         return max(dims) / min(dims)
+
+    @property
+    def overhang_fraction(self):
+        """Share of surface area needing support when printed, 0 to 1."""
+        if self.overhang_area_mm2 is None or not self.surface_area_mm2:
+            return None
+        return self.overhang_area_mm2 / self.surface_area_mm2
 
     @property
     def cylindrical_diameters(self):
@@ -251,6 +259,7 @@ class CADGeometry:
         self.wall_thickness_rays = mesh.wall_thickness_rays
         self.triangles = mesh.triangles
         self.triangle_count = mesh.triangle_count
+        self.overhang_area_mm2 = mesh.overhang_area_mm2
         self.mesh_source = mesh.file_name
         self.read_notes.extend(mesh.read_notes)
         return True
@@ -306,6 +315,9 @@ class CADGeometry:
                          % (len(self.cylinder_radii),
                             ", ".join("%.2f" % d
                                       for d in self.cylindrical_diameters)))
+        if self.overhang_fraction is not None:
+            lines.append("Overhang area:   %.1f%% of the surface needs support "
+                         "beyond 45 deg" % (self.overhang_fraction * 100))
         if self.min_wall_thickness_mm is not None:
             lines.append("Min wall thick.: %.2f mm  (ray cast, %d samples)"
                          % (self.min_wall_thickness_mm, self.wall_thickness_rays))
@@ -343,6 +355,8 @@ class CADGeometry:
             'is_watertight': self.is_watertight,
             'triangle_count': self.triangle_count,
             'mesh_source': self.mesh_source,
+            'overhang_area_mm2': self.overhang_area_mm2,
+            'overhang_fraction': self.overhang_fraction,
             'face_count': self.face_count,
             'plane_count': self.plane_count,
             'solid_count': self.solid_count,
@@ -786,6 +800,52 @@ def measure_wall_thickness(triangles, max_rays=None, progress=None):
     return (thinnest, rays)
 
 
+def measure_overhang(triangles, build_direction=(0.0, 0.0, 1.0),
+                     limit_deg=45.0, plate_tolerance=0.05):
+    """Surface area that would need support when printed.
+
+    A face is self-supporting while it leans no more than ``limit_deg`` from
+    the build direction. Faces flatter than that, and not resting on the
+    build plate, need support.
+
+    Returns (overhanging_area_mm2, total_area_mm2). Both are real areas
+    summed from the mesh, not estimates.
+    """
+    unit = _normalise_vec(build_direction)
+    if not triangles or unit is None:
+        return (None, None)
+
+    down = tuple(-component for component in unit)
+    threshold = math.cos(math.radians(limit_deg))
+
+    heights = [sum(v[i] * unit[i] for i in range(3))
+               for triangle in triangles for v in triangle]
+    plate = min(heights)
+
+    overhang = 0.0
+    total = 0.0
+    for v0, v1, v2 in triangles:
+        a = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+        b = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
+        normal = _cross(a, b)
+        magnitude = math.sqrt(_dot(normal, normal))
+        if magnitude == 0:
+            continue
+        area = magnitude / 2.0
+        total += area
+
+        facing = _dot(normal, down) / magnitude
+        if facing <= threshold:
+            continue  # steep enough to support itself
+        centroid_height = sum(
+            ((v0[i] + v1[i] + v2[i]) / 3.0) * unit[i] for i in range(3))
+        if centroid_height - plate <= plate_tolerance:
+            continue  # sitting on the build plate
+        overhang += area
+
+    return (overhang, total)
+
+
 def _stl_is_binary(path):
     size = os.path.getsize(path)
     with open(path, 'rb') as handle:
@@ -875,6 +935,10 @@ def read_stl(path, geom, progress=None):
     geom.is_watertight = all(n == 2 for n in edges.values())
     geom.units = 'millimetre (assumed - STL carries no units)'
     geom.triangles = triangles
+
+    overhang, _total_area = measure_overhang(triangles)
+    geom.overhang_area_mm2 = overhang
+
     if geom.is_watertight:
         # Thickness is only meaningful when the mesh is closed.
         thickness, rays = measure_wall_thickness(triangles, progress=progress)

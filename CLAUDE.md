@@ -58,7 +58,7 @@ web_dashboard/app.py       Flask dashboard; queues analyses as background jobs
 web_dashboard/jobs.py      Thread-backed job runner with progress reporting
 scripts/                   Batch analysis, Creo export helper, sample generator
 example_parts/             sample_bracket.STEP and .stl (committed)
-tests/                     129 tests
+tests/                     146 tests
 ```
 
 ## Commands
@@ -66,7 +66,7 @@ tests/                     129 tests
 ```bash
 python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 python -m unittest discover -s tests          # no dependencies needed
-.venv/bin/python -m pytest tests/ -q          # 129 pass
+.venv/bin/python -m pytest tests/ -q          # 146 pass
 .venv/bin/python web_dashboard/app.py         # dashboard on :5000
 ```
 
@@ -128,6 +128,20 @@ bounding boxes disagree by more than 5% - pairing the wrong files must never
 report another part's wall thickness. Exposed as `analyze.py --mesh`, the
 dashboard's **Paired STL** field, and automatic stem-matching in
 `batch_analysis.py`.
+
+## Every process must earn its name
+
+`sheet_metal` and `3d_printing` once had thresholds in `DFMAnalyzer.thresholds`
+but no `_check_*` method using them, so both produced output identical to
+`general` while appearing to be real options. `tests/test_process_checks.py`
+asserts each process's finding set differs from `general`. If you add a
+process, add its checks and that test - a threshold nothing reads is a lie in
+a table.
+
+Both new check sets depend on the paired mesh: sheet rules are ratios of the
+measured thickness, and the print support burden is an area measured off the
+mesh. When there is no mesh they say so through `add_note` rather than
+staying silent.
 
 ## Option precedence
 

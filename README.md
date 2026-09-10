@@ -18,9 +18,10 @@ python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 
 ---
 
-**New to it? [docs/WORKFLOW.md](docs/WORKFLOW.md) walks through exporting from
-your CAD system and running a study on your own parts and assemblies, step by
-step.**
+**New to programming?** [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) is
+double-clicking and dragging only - no command line.
+**Comfortable with a terminal?** [docs/WORKFLOW.md](docs/WORKFLOW.md) covers
+export settings, assemblies, batch runs and the parameters file.
 
 ---
 
@@ -351,8 +352,8 @@ scripts/
   generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
 example_parts/              sample_bracket (STEP+STL), sample_housing
                             (drafted), sample_assembly (3 placed parts)
-tests/                      129 tests
-docs/                       Workflow guide, installation, Creo, examples
+tests/                      146 tests
+docs/                       Getting started, workflow, installation, Creo
 ```
 
 ---
@@ -364,7 +365,7 @@ python -m unittest discover -s tests     # no dependencies needed
 .venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
-129 tests. The 17 web-dashboard tests skip automatically when Flask is not
+146 tests. The 17 web-dashboard tests skip automatically when Flask is not
 installed.
 
 ---

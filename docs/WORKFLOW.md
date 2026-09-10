@@ -143,10 +143,15 @@ findings. Pick the one you will actually make the part by:
 | Process | Use when | Checks it turns on |
 |---|---|---|
 | `cnc_machining` | Milled or turned | Min hole 2.0 mm, min feature 1.0 mm, internal corner radii |
-| `injection_molding` | Moulded plastic | Wall 1.5-5.0 mm, **draft angle**, fillets |
-| `sheet_metal` | Folded sheet | Bend and hole ratios |
-| `3d_printing` | Printed | Wall 1.0 mm, feature 0.5 mm |
+| `injection_molding` | Moulded plastic | Wall 1.5-5.0 mm, **draft angle measured per face**, fillets |
+| `sheet_metal` | Folded sheet | Holes and bend radii against the **measured sheet thickness** (needs a paired STL) |
+| `3d_printing` | Printed | **Overhang area measured from the mesh**, build volume, wall 1.0 mm, feature 0.5 mm |
 | `general` | Not decided yet | Conservative defaults only |
+
+Sheet metal and 3D printing get most of their value from the paired STL: sheet
+rules are all ratios of the material thickness, and the support burden is an
+area measured off the mesh. Without one, both say so rather than staying
+quiet.
 
 For a moulded part, also say which way the tool pulls, if it is not Z:
 

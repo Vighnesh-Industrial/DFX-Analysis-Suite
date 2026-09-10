@@ -12,6 +12,13 @@ GENERAL_LIMITS = {
     'min_wall_thickness': 1.0,
 }
 
+# Above this share of surface area needing support, a print is worth
+# reorienting rather than propping up.
+OVERHANG_WARNING_FRACTION = 0.15
+
+# A common desktop build volume, in mm. Override per machine.
+DEFAULT_BUILD_ENVELOPE_MM = (250.0, 210.0, 210.0)
+
 
 class DFMAnalyzer:
     """Analyzes components for manufacturing feasibility."""
@@ -227,6 +234,10 @@ class DFMAnalyzer:
                     'Fillet internal corners to at least R%.1f mm to avoid '
                     'stress risers and to help the melt flow.'
                     % self.thresholds['injection_molding']['min_fillet_radius'])
+        elif self.process == 'sheet_metal':
+            self._check_sheet_metal(geom, name)
+        elif self.process == '3d_printing':
+            self._check_3d_printing(geom, name)
         elif self.process == 'cnc_machining':
             if not geom.torus_minor_radii and geom.plane_count >= 6:
                 self.add_warning(
@@ -235,6 +246,100 @@ class DFMAnalyzer:
                     'cannot be produced by a rotating cutter.',
                     'Add a corner radius of at least half the intended cutter '
                     'diameter to every internal corner.')
+
+    def _check_sheet_metal(self, geom, name):
+        """Sheet metal rules are all ratios of the sheet thickness.
+
+        The thickness has to be measured, which needs a mesh; without one
+        the checks are skipped and said to be skipped.
+        """
+        limits = self.limits()
+        thickness = geom.min_wall_thickness_mm
+        if thickness is None:
+            self.add_note(
+                name, 'Sheet thickness unknown',
+                'Sheet metal rules are ratios of the material thickness, and '
+                'a B-rep file does not carry one.',
+                'Export an STL of the same part and pass it as the paired '
+                'mesh, and the hole and bend checks will run.')
+            return
+
+        self.add_note(
+            name, 'Sheet thickness',
+            'Measured thickness is %.2f mm; the checks below are relative to '
+            'it.' % thickness,
+            'Confirm this matches the sheet you intend to order.')
+
+        smallest = geom.min_cylindrical_diameter
+        if smallest is None:
+            return
+
+        hole_ratio = limits.get('min_hole_diameter_ratio', 1.5)
+        bend_ratio = limits.get('min_bend_radius_ratio', 1.0)
+        hole_floor = hole_ratio * thickness
+        bend_floor = bend_ratio * thickness
+
+        if smallest < hole_floor:
+            self.add_violation(
+                name, 'Feature too small for the sheet',
+                '%.2f mm diameter' % smallest,
+                'hole >= %.2f mm (%.1ft), bend radius >= %.2f mm (%.1ft)'
+                % (hole_floor, hole_ratio, bend_floor, bend_ratio),
+                'A cylindrical feature of %.2f mm is below the guideline for '
+                '%.2f mm sheet. If it is a hole, punching it will tear or '
+                'blunt the tool - open it to %.2f mm or drill it. If it is a '
+                'bend, the radius will crack the outer fibre - open it to '
+                '%.2f mm.'
+                % (smallest, thickness, hole_floor, bend_floor))
+
+    def _check_3d_printing(self, geom, name, envelope=DEFAULT_BUILD_ENVELOPE_MM):
+        """Support burden and build volume, the two that decide print cost."""
+        fraction = geom.overhang_fraction
+        if fraction is None:
+            self.add_note(
+                name, 'Overhangs not measured',
+                'Overhang area is measured from a mesh, and this file is not '
+                'one.',
+                'Export an STL of the same part and pass it as the paired '
+                'mesh to have the support burden measured.')
+        elif fraction > OVERHANG_WARNING_FRACTION:
+            self.add_warning(
+                name, 'Heavy support burden',
+                '%.0f%% of the surface (%.0f mm2) faces downward beyond 45 '
+                'degrees and would need support.'
+                % (fraction * 100, geom.overhang_area_mm2),
+                'Reorient the part on the plate, or add chamfers below '
+                'overhanging faces so they self-support. Support costs print '
+                'time and leaves witness marks that need finishing.')
+        elif fraction > 0:
+            self.add_note(
+                name, 'Overhangs measured',
+                '%.1f%% of the surface would need support in this '
+                'orientation.' % (fraction * 100),
+                'Below the %.0f%% mark, so support is a minor cost.'
+                % (OVERHANG_WARNING_FRACTION * 100))
+        else:
+            self.add_note(
+                name, 'Self-supporting',
+                'No face needs support in this orientation.',
+                'The part prints without support as modelled.')
+
+        dims = geom.dimensions
+        if dims and envelope:
+            oversize = [(actual, limit) for actual, limit
+                        in zip(sorted(dims, reverse=True),
+                               sorted(envelope, reverse=True))
+                        if actual > limit]
+            if oversize:
+                self.add_warning(
+                    name, 'Larger than the build volume',
+                    'The part measures %.0f x %.0f x %.0f mm against an '
+                    'assumed %.0f x %.0f x %.0f mm build volume.'
+                    % (tuple(sorted(dims, reverse=True))
+                       + tuple(sorted(envelope, reverse=True))),
+                    'Split the part and join it after printing, or use a '
+                    'larger machine. Check the envelope of the machine you '
+                    'actually have.')
 
     def _check_envelope_and_complexity(self, geom, name):
         largest = geom.max_dimension

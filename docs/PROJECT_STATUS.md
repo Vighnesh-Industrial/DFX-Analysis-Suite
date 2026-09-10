@@ -174,6 +174,32 @@ fixed:
 and an assembly, reading the report, the parameters file, batch mode, PDFs
 and a troubleshooting table. Every command in it was run before it shipped.
 
+## Seventh pass: the processes that were not real
+
+Asked whether the tool only handles CNC parts, the honest answer turned out to
+be worse than expected: `sheet_metal` and `3d_printing` had thresholds in the
+table but no checks reading them, so both produced output byte-identical to
+`general`. They looked like options and were not.
+
+Both are now real:
+
+* **Sheet metal** checks cylindrical features against the measured sheet
+  thickness - a hole below 1.5t will tear when punched, a bend radius below
+  1t will crack the outer fibre. Since a STEP file does not distinguish a
+  hole from a bend, the finding names both cases rather than guessing.
+* **3D printing** measures the *area* of surface that faces downward beyond
+  45 degrees and is not resting on the build plate, so the support burden is
+  a real number rather than an impression. Plus a build-volume check.
+
+Both need the paired mesh, and both say so when it is missing.
+`tests/test_process_checks.py` now asserts that each process's finding set
+differs from `general`, so a threshold nobody reads cannot reappear.
+
+Also added `docs/GETTING_STARTED.md` for a user who has never used a command
+line, and made `run_analysis.bat` do the whole job from a drag-and-drop: it
+finds the matching `.stl` beside the dropped file, writes both reports and
+opens the HTML one in the browser. `run_dashboard.bat` opens the browser too.
+
 ## Deliberate limits
 
 The tool reports what it can measure and says when it cannot measure something.
