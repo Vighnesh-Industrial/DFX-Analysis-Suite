@@ -151,6 +151,29 @@ On the question of PDF: a PDF would carry exactly the same content as the
 HTML report. It is a container, not another source of data, and the HTML
 report already prints to PDF from any browser. No PDF exporter was added.
 
+## Sixth pass: making the workflow usable end to end
+
+Walking the documented workflow as a user would turned up three snags, all
+fixed:
+
+* **A STEP and its STL were two separate reports.** The advice "export an STL
+  too, for wall thickness" produced two disconnected analyses of the same
+  part. `adopt_mesh` now merges them: the STEP supplies features and draft,
+  the mesh supplies thickness, volume and mass, and the pair is checked
+  against each other so the wrong STL is refused rather than reporting
+  another part's thickness. Batch mode pairs by filename automatically, so a
+  folder of three parts produces three reports rather than four.
+
+* **`--process` was silently overridden by a `--params` file.** A flag the
+  user typed now beats a value in a file.
+
+* **A traceback could be written after a job reported failure**, so a caller
+  watching for `error` raced the log. The log is written first.
+
+`docs/WORKFLOW.md` was added: export settings per CAD system, running a part
+and an assembly, reading the report, the parameters file, batch mode, PDFs
+and a troubleshooting table. Every command in it was run before it shipped.
+
 ## Deliberate limits
 
 The tool reports what it can measure and says when it cannot measure something.

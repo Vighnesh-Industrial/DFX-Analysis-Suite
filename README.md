@@ -18,6 +18,12 @@ python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 
 ---
 
+**New to it? [docs/WORKFLOW.md](docs/WORKFLOW.md) walks through exporting from
+your CAD system and running a study on your own parts and assemblies, step by
+step.**
+
+---
+
 ## Quick start
 
 ### Windows
@@ -164,8 +170,19 @@ the inward normal, and the distance to the first face it meets is the local
 wall thickness. The result is the thinnest wall **found** by sampling, not a
 proven global minimum, and the report says how many rays were cast.
 
-STEP files carry no thickness figure - export an STL alongside to have it
-measured.
+STEP files carry no thickness figure. Export an STL of the same model
+alongside and pass it with `--mesh`, and the STEP supplies the features and
+draft while the mesh supplies thickness, true volume and mass - one report
+with all of it:
+
+```bash
+python analyze.py part.step --mesh part.stl --process cnc_machining
+```
+
+The two files are checked against each other first: if their bounding boxes
+disagree, the mesh is refused rather than reporting another part's wall
+thickness. In the dashboard it is the **Paired STL** upload field, and
+`batch_analysis.py` pairs `part.step` with `part.stl` automatically.
 
 ### Accepted but **not** measurable
 
@@ -191,6 +208,7 @@ are never confused.
 python analyze.py PART.step [options]
 
   --process {general,cnc_machining,injection_molding,sheet_metal,3d_printing}
+  --mesh PART.stl         a paired STL of the same model, for wall thickness
   --name NAME             component name for the report
   --params FILE.json      DFA/DFS answers (see examples/dfx_params_template.json)
   --output REPORT.txt     write the text report
@@ -333,8 +351,8 @@ scripts/
   generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
 example_parts/              sample_bracket (STEP+STL), sample_housing
                             (drafted), sample_assembly (3 placed parts)
-tests/                      118 tests
-docs/                       Installation, Creo integration, examples
+tests/                      129 tests
+docs/                       Workflow guide, installation, Creo, examples
 ```
 
 ---
@@ -346,7 +364,7 @@ python -m unittest discover -s tests     # no dependencies needed
 .venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
-118 tests. The 17 web-dashboard tests skip automatically when Flask is not
+129 tests. The 17 web-dashboard tests skip automatically when Flask is not
 installed.
 
 ---
@@ -363,8 +381,8 @@ installed.
 
 Honest list of what is *not* implemented yet:
 
-* Wall thickness directly from a STEP B-rep. Export an STL alongside and the
-  thickness is measured from that.
+* Wall thickness directly from a STEP B-rep. Pair an STL export with `--mesh`
+  and the thickness is measured from that instead.
 * Hidden-line removal in the wireframe views: STEP views show all edges,
   including those behind the part.
 * Jobs live in memory, so a server restart loses them. Fine for a local tool,

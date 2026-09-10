@@ -34,8 +34,11 @@ python analyze.py example_parts/sample_housing.STEP --process injection_molding
 # The same bracket as a mesh - wall thickness is measured by ray casting
 python analyze.py example_parts/sample_bracket.stl --process injection_molding
 
-# A two-part assembly - the part count is read from the file
+# A three-part assembly - findings name the component they came from
 python analyze.py example_parts/sample_assembly.STEP
+
+# STEP features plus mesh wall thickness, in one report
+python analyze.py example_parts/sample_bracket.STEP --mesh example_parts/sample_bracket.stl
 ```
 
 The housing reports `Draft confirmed - all 8 wall faces carry between 2.0 and
@@ -91,6 +94,9 @@ and *Rendering views*. The result shows four rendered views of the part above
 the report.
 
 ---
+
+Working with your own CAD? See [docs/WORKFLOW.md](docs/WORKFLOW.md) for the
+export settings and the full step-by-step.
 
 ## If something goes wrong
 

@@ -23,11 +23,16 @@ class ComprehensiveDFXAnalyzer:
     """
 
     def __init__(self, cad_file_path, process_type='general', component_name=None,
-                 pull_direction=(0.0, 0.0, 1.0), progress=None):
+                 pull_direction=(0.0, 0.0, 1.0), progress=None, mesh_path=None):
         self.cad_file = cad_file_path
+        self.mesh_file = mesh_path
         self.process_type = process_type
         self.pull_direction = pull_direction
         self.geometry = read_cad(cad_file_path, progress=progress)
+        if mesh_path:
+            # A paired mesh supplies the wall thickness and true volume that
+            # a B-rep file cannot.
+            self.geometry.adopt_mesh(read_cad(mesh_path, progress=progress))
         self._views = None
         self._view_note = None
         self.component_name = (component_name

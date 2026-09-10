@@ -15,6 +15,13 @@
         </div>
 
         <div style="margin-bottom: 2rem;">
+            <label for="mesh" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">Paired STL (optional)</label>
+            <input type="file" id="mesh" name="mesh" accept=".stl" style="padding: 0.5rem; width: 100%;">
+            <small style="color: #666;">Export the same model as STL as well, and wall
+            thickness, true volume and mass get measured too - a STEP file cannot supply them.</small>
+        </div>
+
+        <div style="margin-bottom: 2rem;">
             <label for="process_type" style="display: block; font-weight: bold; margin-bottom: 0.5rem;">Manufacturing Process</label>
             <select id="process_type" name="process_type">
                 <option value="general">General</option>

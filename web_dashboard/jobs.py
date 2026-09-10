@@ -83,10 +83,12 @@ class JobStore:
             job.status = 'done'
             job.message = 'Complete'
         except Exception as error:  # noqa: BLE001 - reported to the browser
-            job.status = 'error'
+            # Log first: a caller watching for 'error' would otherwise race
+            # the traceback being written.
+            traceback.print_exc()
             job.error = '%s: %s' % (type(error).__name__, error)
             job.message = 'Failed'
-            traceback.print_exc()
+            job.status = 'error'
         finally:
             job.finished_at = datetime.now()
 

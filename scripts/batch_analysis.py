@@ -33,11 +33,25 @@ def batch_analyze(input_dir, output_dir=None, process_type='general', **dfa_para
     output_path = Path(output_dir or 'dfx_reports')
     output_path.mkdir(parents=True, exist_ok=True)
 
-    cad_files = sorted(f for f in input_path.iterdir()
-                       if f.suffix.lower() in SUPPORTED_FORMATS)
-    if not cad_files:
+    found = sorted(f for f in input_path.iterdir()
+                   if f.suffix.lower() in SUPPORTED_FORMATS)
+    if not found:
         print("No CAD files found in %s" % input_dir)
         return []
+
+    # A part exported as both STEP and STL is one part, not two: analyse the
+    # B-rep and hand it the mesh, so features and wall thickness land in the
+    # same report.
+    meshes = {f.stem.lower(): f for f in found if f.suffix.lower() == '.stl'}
+    cad_files = [f for f in found if f.suffix.lower() != '.stl']
+    paired = {}
+    for cad_file in cad_files:
+        mesh = meshes.pop(cad_file.stem.lower(), None)
+        if mesh is not None:
+            paired[cad_file] = mesh
+    # Any mesh with no B-rep partner is still a part in its own right.
+    cad_files.extend(meshes.values())
+    cad_files.sort()
 
     print("DFX BATCH ANALYSIS")
     print("Found %d CAD file(s); process: %s" % (len(cad_files), process_type))
@@ -46,8 +60,13 @@ def batch_analyze(input_dir, output_dir=None, process_type='general', **dfa_para
     results_summary = []
     for index, cad_file in enumerate(cad_files, 1):
         print("[%d/%d] Analyzing: %s" % (index, len(cad_files), cad_file.name))
+        mesh = paired.get(cad_file)
+        if mesh is not None:
+            print("      paired with %s for wall thickness" % mesh.name)
         try:
-            analyzer = ComprehensiveDFXAnalyzer(str(cad_file), process_type=process_type)
+            analyzer = ComprehensiveDFXAnalyzer(
+                str(cad_file), process_type=process_type,
+                mesh_path=str(mesh) if mesh is not None else None)
             report = analyzer.generate_master_report(dict(dfa_params))
             scores = analyzer.scores()
 
@@ -75,6 +94,7 @@ def batch_analyze(input_dir, output_dir=None, process_type='general', **dfa_para
                 'dfm_violations': scores['dfm_violations'],
                 'dfi_critical': scores['dfi_critical'],
                 'readable': analyzer.geometry.readable,
+                'paired_mesh': mesh.name if mesh is not None else '',
             })
         except Exception as error:  # noqa: BLE001 - one bad file must not stop the batch
             print("      FAILED: %s: %s" % (type(error).__name__, error))
@@ -87,7 +107,8 @@ def batch_analyze(input_dir, output_dir=None, process_type='general', **dfa_para
 
     summary_csv = output_path / 'batch_summary.csv'
     columns = ['file', 'status', 'composite', 'dfa', 'dfm', 'dfi', 'dfs',
-               'dfm_violations', 'dfi_critical', 'readable', 'report', 'error']
+               'dfm_violations', 'dfi_critical', 'readable', 'paired_mesh',
+               'report', 'error']
     with open(summary_csv, 'w', encoding='utf-8', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='ignore')
         writer.writeheader()

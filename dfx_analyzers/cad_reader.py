@@ -91,6 +91,7 @@ class CADGeometry:
     wall_thickness_rays: int = 0
 
     # Mesh measurements (STL)
+    mesh_source: str = None
     triangles: list = field(default_factory=list, repr=False)
     triangle_count: int = 0
     volume_mm3: float = None
@@ -214,6 +215,46 @@ class CADGeometry:
     def has_measurable_geometry(self):
         return self.bbox_min is not None or self.volume_mm3 is not None
 
+    def adopt_mesh(self, mesh, tolerance=0.05):
+        """Take the measurements only a mesh can give, from a paired STL.
+
+        A STEP file carries features and draft but no wall thickness; a mesh
+        carries thickness and true volume but no features. Exporting both and
+        analysing them together gives one report with all of it.
+
+        The two files are checked against each other first: if their
+        bounding boxes disagree by more than ``tolerance``, they are probably
+        not the same model and the mesh measurements are refused.
+        """
+        if not mesh.readable or not mesh.triangle_count:
+            self.read_notes.append(
+                "Paired mesh '%s' could not be read, so wall thickness was "
+                "not measured." % mesh.file_name)
+            return False
+
+        mine, theirs = self.dimensions, mesh.dimensions
+        if mine and theirs:
+            for a, b in zip(mine, theirs):
+                largest = max(abs(a), abs(b), 1e-9)
+                if abs(a - b) / largest > tolerance:
+                    self.read_notes.append(
+                        "Paired mesh '%s' measures %.1f x %.1f x %.1f mm "
+                        "against this model's %.1f x %.1f x %.1f mm, so it "
+                        "was ignored - check the two files are the same "
+                        "model." % ((mesh.file_name,) + theirs + mine))
+                    return False
+
+        self.volume_mm3 = mesh.volume_mm3
+        self.surface_area_mm2 = mesh.surface_area_mm2
+        self.is_watertight = mesh.is_watertight
+        self.min_wall_thickness_mm = mesh.min_wall_thickness_mm
+        self.wall_thickness_rays = mesh.wall_thickness_rays
+        self.triangles = mesh.triangles
+        self.triangle_count = mesh.triangle_count
+        self.mesh_source = mesh.file_name
+        self.read_notes.extend(mesh.read_notes)
+        return True
+
     def estimated_mass_g(self, density_g_cm3=7.85):
         """Mass estimate in grams.
 
@@ -251,7 +292,10 @@ class CADGeometry:
         if self.is_watertight is not None:
             lines.append("Watertight mesh: %s" % ("yes" if self.is_watertight else "NO"))
         if self.triangle_count:
-            lines.append("Triangles:       %d" % self.triangle_count)
+            lines.append("Triangles:       %d%s"
+                         % (self.triangle_count,
+                            " (from %s)" % self.mesh_source
+                            if self.mesh_source else ""))
         if self.face_count:
             lines.append("B-rep faces:     %d (planar: %d)" % (self.face_count, self.plane_count))
         if self.solid_count:
@@ -298,6 +342,7 @@ class CADGeometry:
             'surface_area_mm2': self.surface_area_mm2,
             'is_watertight': self.is_watertight,
             'triangle_count': self.triangle_count,
+            'mesh_source': self.mesh_source,
             'face_count': self.face_count,
             'plane_count': self.plane_count,
             'solid_count': self.solid_count,

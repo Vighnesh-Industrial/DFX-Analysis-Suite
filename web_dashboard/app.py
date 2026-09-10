@@ -108,7 +108,7 @@ def get_formats():
                     'measurable_extensions': sorted(READABLE_EXTENSIONS)})
 
 
-def run_analysis(job, filepath, filename, params, timestamp):
+def run_analysis(job, filepath, filename, params, timestamp, mesh_path=None):
     """The background worker: read, analyse, render and write the reports."""
     job.report(0.05, 'Reading CAD file')
 
@@ -116,7 +116,8 @@ def run_analysis(job, filepath, filename, params, timestamp):
         filepath,
         process_type=params.get('process_type', 'general'),
         progress=lambda fraction, message: job.report(
-            0.05 + 0.45 * fraction, message))
+            0.05 + 0.45 * fraction, message),
+        mesh_path=mesh_path)
 
     job.report(0.55, 'Running DFX checks')
     master_report = analyzer.generate_master_report(params)
@@ -174,9 +175,22 @@ def analyze():
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     uploaded.save(filepath)
 
+    # An optional paired STL supplies the wall thickness a STEP cannot.
+    mesh_path = None
+    mesh = request.files.get('mesh')
+    if mesh is not None and mesh.filename:
+        if not allowed_file(mesh.filename):
+            return jsonify({'error': 'Paired mesh must be one of: %s'
+                                     % ', '.join(sorted(ALLOWED_EXTENSIONS))}), 400
+        mesh_path = os.path.join(app.config['UPLOAD_FOLDER'],
+                                 '%s_mesh_%s' % (timestamp,
+                                                 secure_filename(mesh.filename)))
+        mesh.save(mesh_path)
+
     params = collect_params(request.form)
     job = jobs.submit(
-        lambda job: run_analysis(job, filepath, filename, params, timestamp),
+        lambda job: run_analysis(job, filepath, filename, params, timestamp,
+                                 mesh_path),
         label=secure_filename(uploaded.filename))
 
     return jsonify({'job_id': job.id,

@@ -58,7 +58,7 @@ web_dashboard/app.py       Flask dashboard; queues analyses as background jobs
 web_dashboard/jobs.py      Thread-backed job runner with progress reporting
 scripts/                   Batch analysis, Creo export helper, sample generator
 example_parts/             sample_bracket.STEP and .stl (committed)
-tests/                     118 tests
+tests/                     129 tests
 ```
 
 ## Commands
@@ -66,7 +66,7 @@ tests/                     118 tests
 ```bash
 python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 python -m unittest discover -s tests          # no dependencies needed
-.venv/bin/python -m pytest tests/ -q          # 118 pass
+.venv/bin/python -m pytest tests/ -q          # 129 pass
 .venv/bin/python web_dashboard/app.py         # dashboard on :5000
 ```
 
@@ -118,6 +118,22 @@ python -m unittest discover -s tests          # no dependencies needed
 `/api/jobs/<id>` for `status`, `progress` and `message`. Analysis runs on a
 worker thread in `web_dashboard/jobs.py`. Tests must poll rather than expect a
 result from the POST - see `_await_job` in `tests/test_web_app.py`.
+
+## Paired mesh
+
+A STEP file has features and draft but no wall thickness; an STL has thickness
+and true volume but no features. `CADGeometry.adopt_mesh` merges the mesh
+measurements into a B-rep geometry, and refuses the mesh when the two
+bounding boxes disagree by more than 5% - pairing the wrong files must never
+report another part's wall thickness. Exposed as `analyze.py --mesh`, the
+dashboard's **Paired STL** field, and automatic stem-matching in
+`batch_analysis.py`.
+
+## Option precedence
+
+An explicit `--process` on the command line beats `process_type` in a
+`--params` file, which beats the `general` default. A flag the user typed
+should never be silently overridden by a file.
 
 ## Adding a DFX check
 

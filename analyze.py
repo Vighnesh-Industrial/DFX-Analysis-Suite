@@ -29,8 +29,13 @@ def build_parser():
         epilog='Supported for measurement: STEP (.step/.stp) and STL (.stl).\n'
                'Creo, SolidWorks and IGES files must be exported to STEP first.')
     parser.add_argument('cad_file', help='Path to the CAD file to analyse')
-    parser.add_argument('--process', default='general', choices=PROCESSES,
-                        help='Manufacturing process for the DFM checks')
+    parser.add_argument('--process', default=None, choices=PROCESSES,
+                        help='Manufacturing process for the DFM checks '
+                             '(default: general, or whatever --params says)')
+    parser.add_argument('--mesh', metavar='FILE',
+                        help='A paired STL of the same model, to measure wall '
+                             'thickness and true volume that a STEP file '
+                             'cannot supply')
     parser.add_argument('--name', help='Component name for the report')
     parser.add_argument('--params', metavar='FILE',
                         help='JSON file of DFA/DFS parameters '
@@ -82,7 +87,14 @@ def main(argv=None):
         print("Error: could not read parameters file: %s" % error, file=sys.stderr)
         return 2
 
-    params.setdefault('process_type', args.process)
+    # An explicit --process beats the parameters file; the file beats the
+    # built-in default.
+    process = args.process or params.get('process_type') or 'general'
+    params['process_type'] = process
+
+    if args.mesh and not os.path.exists(args.mesh):
+        print("Error: paired mesh not found: %s" % args.mesh, file=sys.stderr)
+        return 2
 
     pull = {'X': (1.0, 0.0, 0.0), 'Y': (0.0, 1.0, 0.0),
             'Z': (0.0, 0.0, 1.0)}[args.pull]
@@ -93,8 +105,8 @@ def main(argv=None):
             sys.stderr.flush()
 
     analyzer = ComprehensiveDFXAnalyzer(
-        args.cad_file, process_type=args.process, component_name=args.name,
-        pull_direction=pull, progress=show_progress)
+        args.cad_file, process_type=process, component_name=args.name,
+        pull_direction=pull, progress=show_progress, mesh_path=args.mesh)
     if not args.quiet:
         sys.stderr.write('\r' + ' ' * 66 + '\r')
     report = analyzer.generate_master_report(params)
