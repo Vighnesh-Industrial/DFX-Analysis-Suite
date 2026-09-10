@@ -80,13 +80,24 @@ def build_housing():
 
 
 def build_assembly():
-    """Two parts in one STEP file, so the assembly structure can be read."""
+    """Three parts in one STEP file, exercising the placement transforms.
+
+    The bracket is both translated and rotated, so a reader that ignores
+    placement - or that only handles translation - gets a visibly wrong
+    envelope. Assembled extents are 60 x 40 x 28 mm:
+      base plate  60 x 40 x  5 at the origin
+      top cover   50 x 30 x  3 sitting on the plate at z = 5
+      post        10 x 10 x 20 rotated 90 deg about X, standing at z = 8
+    """
     plate = cq.Workplane('XY').box(60.0, 40.0, 5.0, centered=(True, True, False))
     cover = cq.Workplane('XY').box(50.0, 30.0, 3.0, centered=(True, True, False))
+    post = cq.Workplane('XY').box(10.0, 20.0, 10.0, centered=(True, False, False))
 
     assembly = cq.Assembly(name='Sample_Assembly')
     assembly.add(plate, name='base_plate', loc=cq.Location(cq.Vector(0, 0, 0)))
     assembly.add(cover, name='top_cover', loc=cq.Location(cq.Vector(0, 0, 5.0)))
+    assembly.add(post, name='riser_post',
+                 loc=cq.Location(cq.Vector(0, 0, 8.0), cq.Vector(1, 0, 0), 90))
     return assembly
 
 

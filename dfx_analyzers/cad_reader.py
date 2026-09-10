@@ -73,6 +73,7 @@ class CADGeometry:
 
     # Assembly structure (STEP)
     assembly_instance_count: int = 0
+    components_placed: bool = False
     distinct_product_count: int = 0
 
     # Measured draft angles (STEP conical faces), degrees from the axis
@@ -260,8 +261,12 @@ class CADGeometry:
             lines.append("Conical angles:  %s deg  (draft and chamfer faces)" %
                          ", ".join("%.1f" % a for a in self.draft_angles))
         if self.assembly_instance_count:
-            lines.append("Assembly:        %d component instance(s), %d distinct product(s)"
-                         % (self.assembly_instance_count, self.distinct_product_count))
+            lines.append("Assembly:        %d component instance(s), %d distinct "
+                         "product(s); placements %s"
+                         % (self.assembly_instance_count,
+                            self.distinct_product_count,
+                            "applied" if self.components_placed
+                            else "NOT resolved"))
         if self.torus_minor_radii:
             lines.append("Fillet radii:    %s mm" %
                          ", ".join("%.2f" % r for r in self.fillet_radii))
@@ -295,6 +300,7 @@ class CADGeometry:
             'wall_draft_angles_deg': self.wall_draft_angles(),
             'undrafted_wall_count': self.undrafted_wall_count(),
             'assembly_instance_count': self.assembly_instance_count,
+            'components_placed': self.components_placed,
             'distinct_product_count': self.distinct_product_count,
             'part_count': self.part_count,
             'fillet_radii_mm': self.fillet_radii,
@@ -410,6 +416,11 @@ def read_step(path, geom):
         if len(refs) >= 2:
             vertex_refs.add(refs[-1])
 
+    # An assembly stores each component in its own coordinate system, so the
+    # placements have to be applied before anything is measured.
+    from .step_assembly import read_step_assembly
+    placement = read_step_assembly(path, _step_statements(data_text))
+
     lo = [float('inf')] * 3
     hi = [float('-inf')] * 3
     unit_scale = None
@@ -448,9 +459,10 @@ def read_step(path, geom):
                     # Bound the part by its vertices only, unless the file
                     # defines none (then fall back to every point).
                     if not vertex_refs or entity_id in vertex_refs:
+                        located = placement.place(entity_id, tuple(coords))
                         for axis in range(3):
-                            lo[axis] = min(lo[axis], coords[axis])
-                            hi[axis] = max(hi[axis], coords[axis])
+                            lo[axis] = min(lo[axis], located[axis])
+                            hi[axis] = max(hi[axis], located[axis])
 
         if entity_id and 'DIRECTION' in names:
             point = _POINT_RE.search(body)
@@ -553,12 +565,13 @@ def read_step(path, geom):
             geom.plane_normals.append(normal)
 
     geom.readable = True
-    if geom.assembly_instance_count > 1:
+    geom.components_placed = bool(placement.component_reps)
+    if geom.assembly_instance_count > 1 and not geom.components_placed:
         geom.read_notes.append(
-            "This is an assembly of %d components. The bounding box is the "
-            "union of the component geometry as defined, without applying the "
-            "assembly placement transforms, so it understates the installed "
-            "envelope." % geom.assembly_instance_count)
+            "This is an assembly of %d components, but no placement "
+            "transforms could be read from the file, so the bounding box is "
+            "the union of the component geometry as defined and understates "
+            "the installed envelope." % geom.assembly_instance_count)
     if not geom.face_count and not geom.solid_count:
         geom.read_notes.append(
             "No B-rep faces or solids found - this STEP file carries no solid "
@@ -872,6 +885,8 @@ def read_step_edges(path, max_bytes=MAX_EDGE_FILE_BYTES):
     Returns an empty list when the file is missing, too large to hold in
     memory, or carries no edges. It never raises.
     """
+    from .step_assembly import apply, is_identity, read_step_assembly
+
     try:
         if os.path.getsize(path) > max_bytes:
             return []
@@ -884,6 +899,8 @@ def read_step_edges(path, max_bytes=MAX_EDGE_FILE_BYTES):
     if start == -1:
         return []
     data_text = text[start + 5:]
+
+    placement = read_step_assembly(path, _step_statements(data_text))
 
     points = {}
     vertices = {}
@@ -950,32 +967,46 @@ def read_step_edges(path, max_bytes=MAX_EDGE_FILE_BYTES):
     factor = scale if scale else 1.0
     polylines = []
 
+    def locate(point_id, point):
+        """Move a point into assembly coordinates."""
+        return placement.place(point_id, point) if point_id else point
+
     for start_vertex, end_vertex, curve_id, same_sense in edges:
-        start_point = points.get(vertices.get(start_vertex))
-        end_point = points.get(vertices.get(end_vertex))
+        start_id = vertices.get(start_vertex)
+        end_id = vertices.get(end_vertex)
+        start_point = points.get(start_id)
+        end_point = points.get(end_id)
         if start_point is None or end_point is None:
             continue
+        component = placement.transform_for_point(start_id)
+
+        def emit(line):
+            """Record a polyline, placed into assembly coordinates."""
+            if component is None or is_identity(component):
+                polylines.append(line)
+            else:
+                polylines.append([apply(component, point) for point in line])
 
         circle = circles.get(_resolve_curve(curve_id, basis_curves, circles))
         if circle is None:
-            polylines.append([start_point, end_point])
+            emit([start_point, end_point])
             continue
 
-        placement_id, radius = circle
-        placement = placements.get(placement_id)
-        if not placement:
-            polylines.append([start_point, end_point])
+        axis_id, radius = circle
+        axis_entry = placements.get(axis_id)
+        if not axis_entry:
+            emit([start_point, end_point])
             continue
-        centre = points.get(placement[0])
-        axis = directions.get(placement[1])
-        ref = directions.get(placement[2]) if placement[2] else None
+        centre = points.get(axis_entry[0])
+        axis = directions.get(axis_entry[1])
+        ref = directions.get(axis_entry[2]) if axis_entry[2] else None
         if centre is None or axis is None:
-            polylines.append([start_point, end_point])
+            emit([start_point, end_point])
             continue
 
         arc = _circle_arc(centre, axis, ref, radius,
                           start_point, end_point, same_sense)
-        polylines.append(arc if arc else [start_point, end_point])
+        emit(arc if arc else [start_point, end_point])
 
     if factor != 1.0:
         polylines = [[tuple(c * factor for c in point) for point in line]

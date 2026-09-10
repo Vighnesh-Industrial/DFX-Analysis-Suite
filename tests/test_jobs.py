@@ -1,5 +1,7 @@
 """Tests for the background job runner."""
 
+import contextlib
+import io
 import os
 import sys
 import time
@@ -50,7 +52,10 @@ class TestJobStore(unittest.TestCase):
         def boom(job):
             raise ValueError('bad geometry')
 
-        job = wait_for(self.store.submit(boom))
+        # The runner prints the traceback for the server log; that is wanted
+        # behaviour, but it should not litter the test output.
+        with contextlib.redirect_stderr(io.StringIO()):
+            job = wait_for(self.store.submit(boom))
         self.assertEqual(job.status, 'error')
         self.assertIn('bad geometry', job.error)
         self.assertIsNone(job.result)

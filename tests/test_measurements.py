@@ -111,18 +111,30 @@ class TestAssemblyStructure(unittest.TestCase):
     def test_assembly_part_count_is_read_from_the_file(self):
         geom = read_cad(ASSEMBLY)
         self.assertTrue(geom.is_assembly)
-        self.assertEqual(geom.assembly_instance_count, 2)
-        self.assertEqual(geom.part_count, 2)
+        self.assertEqual(geom.assembly_instance_count, 3)
+        self.assertEqual(geom.part_count, 3)
 
     def test_single_part_is_not_an_assembly(self):
         geom = read_cad(BRACKET)
         self.assertFalse(geom.is_assembly)
         self.assertEqual(geom.part_count, 1)
 
-    def test_assembly_bounding_box_carries_a_caveat(self):
+    def test_component_placements_are_applied(self):
+        """Regression: component geometry is stored in each component's own
+        frame. Without the placements the cover piled onto the plate at the
+        origin and a 28 mm stack measured 5 mm."""
         geom = read_cad(ASSEMBLY)
-        self.assertTrue(any('placement transforms' in note
-                            for note in geom.read_notes))
+        self.assertTrue(geom.components_placed)
+        # Ground truth from OpenCASCADE reading the same file: the plate is
+        # 60 x 40 x 5, the cover sits on it at z = 5, and the post is rotated
+        # 90 degrees about X and stands to z = 28.
+        self.assertEqual(geom.dimensions, (60.0, 40.0, 28.0))
+        self.assertEqual(geom.read_notes, [])
+
+    def test_a_single_part_needs_no_placement(self):
+        geom = read_cad(BRACKET)
+        self.assertFalse(geom.components_placed)
+        self.assertEqual(geom.dimensions, (80.0, 63.0, 25.0))
 
     def test_shelled_surface_model_still_counts_as_one_body(self):
         geom = read_cad(HOUSING)

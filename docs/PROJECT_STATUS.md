@@ -117,6 +117,22 @@ second pass replaced the remaining proxies with real measurements:
   scoring well precisely because none of the geometry checks could run, which
   is the failure mode this project exists to avoid.
 
+## Fourth pass: assemblies, and main
+
+* **Component placements are applied.** A STEP assembly keeps each component's
+  geometry in its own coordinate system, and records the placement separately.
+  Reading the geometry without that chain piled every component on the origin:
+  the sample assembly's 28 mm stack measured 5 mm and the views drew the parts
+  overlapping. The reader now follows
+  `REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION` ->
+  `ITEM_DEFINED_TRANSFORMATION`, resolves each component's world transform and
+  applies it to both vertices and edges. Validated against the kernel on a
+  three-part sample with a rotated component: 60 x 40 x 28 mm, exactly.
+
+* **The work reached `main`.** Everything above had been sitting on a branch,
+  so anyone cloning the repository still got the original broken code. The
+  branch was merged into `main` on request.
+
 ## Deliberate limits
 
 The tool reports what it can measure and says when it cannot measure something.
@@ -141,5 +157,6 @@ not distinguish them without full topology traversal, so they are reported as
 2. Hidden-line removal for the STEP wireframe views.
 3. Undercut detection for moulded parts, now that face normals and a pull
    direction are both available.
-4. Apply assembly placement transforms so an assembly's envelope is correct.
+4. Per-component findings for an assembly, so a finding names the component
+   rather than the whole assembly.
 5. Wall thickness from a STEP B-rep directly, rather than via an STL export.

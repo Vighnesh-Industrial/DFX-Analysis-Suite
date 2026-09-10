@@ -46,6 +46,7 @@ them passing rather than working around them.
 analyze.py                 CLI entry point, no dependencies
 dfx_analyzers/
   cad_reader.py            STEP + STL parsing -> CADGeometry
+  step_assembly.py         Assembly component placement transforms
   render.py                Orthographic SVG views (shaded mesh / STEP wireframe)
   html_report.py           Printable HTML report
   dfm_analyzer.py          Manufacturability checks (geometry-driven)
@@ -57,7 +58,7 @@ web_dashboard/app.py       Flask dashboard; queues analyses as background jobs
 web_dashboard/jobs.py      Thread-backed job runner with progress reporting
 scripts/                   Batch analysis, Creo export helper, sample generator
 example_parts/             sample_bracket.STEP and .stl (committed)
-tests/                     96 tests
+tests/                     109 tests
 ```
 
 ## Commands
@@ -65,7 +66,7 @@ tests/                     96 tests
 ```bash
 python analyze.py example_parts/sample_bracket.STEP --process cnc_machining
 python -m unittest discover -s tests          # no dependencies needed
-.venv/bin/python -m pytest tests/ -q          # 96 pass
+.venv/bin/python -m pytest tests/ -q          # 109 pass
 .venv/bin/python web_dashboard/app.py         # dashboard on :5000
 ```
 
@@ -78,8 +79,9 @@ python -m unittest discover -s tests          # no dependencies needed
   `tests/test_cad_reader.py`.
 * The sample geometry was validated against the OpenCASCADE kernel: 23 faces,
   12 planes, 11 cylindrical radii, and an STL volume within 0.01% of exact.
-* `sample_housing.STEP` has an exact 2 degree taper and `sample_assembly.STEP`
-  has exactly 2 components. Tests assert those numbers.
+* `sample_housing.STEP` has an exact 2 degree taper. `sample_assembly.STEP`
+  has exactly 3 components, one rotated 90 degrees about X, and assembles to
+  60 x 40 x 28 mm. Tests assert those numbers.
 
 ## Measurement invariants worth protecting
 
@@ -99,6 +101,11 @@ python -m unittest discover -s tests          # no dependencies needed
   as a good part. `geometry_measured` in the same dict says which it was.
 * **Views are never faked.** `render_views` returns only the views the file
   can actually supply; `render_note` explains any absence.
+* **Assembly components must be placed before measuring.** Component geometry
+  lives in each component's own frame; skipping the placement chain piled the
+  parts on the origin and measured a 28 mm stack as 5 mm. `components_placed`
+  says whether the placements were resolved, and the report carries a note
+  when they were not.
 
 ## The dashboard is asynchronous
 

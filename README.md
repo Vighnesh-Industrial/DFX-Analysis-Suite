@@ -88,6 +88,22 @@ does not, the report says why instead of showing an empty box.
 
 ---
 
+## Assemblies
+
+A STEP assembly stores each component's geometry in its own coordinate system
+and records separately where that component sits. The reader follows that
+chain - `REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION` to
+`ITEM_DEFINED_TRANSFORMATION` - and places every component before anything is
+measured, so the bounding box, the envelope checks and the rendered views all
+show the assembled model rather than the parts piled on the origin.
+
+The part count used by the DFA score is read from the file's
+`NEXT_ASSEMBLY_USAGE_OCCURRENCE` entries, not guessed. If the placements
+cannot be resolved, the report says so instead of quietly reporting a wrong
+envelope.
+
+---
+
 ## What the tool actually measures
 
 Being precise about this matters: a DFX report that invents numbers is worse
@@ -97,7 +113,7 @@ than no report.
 
 | Format | Extensions | What is extracted |
 |---|---|---|
-| **STEP** | `.step`, `.stp` | Bounding box, units, product name, B-rep face and solid counts, cylindrical / conical / toroidal radii, **per-face draft angle**, **assembly part count** |
+| **STEP** | `.step`, `.stp` | Bounding box, units, product name, B-rep face and solid counts, cylindrical / conical / toroidal radii, **per-face draft angle**, **assembly structure with component placements applied** |
 | **STL** | `.stl` (ASCII + binary) | Exact volume, surface area, bounding box, watertightness, **true wall thickness by ray casting** |
 
 Both readers are validated against ground truth:
@@ -110,6 +126,8 @@ Both readers are validated against ground truth:
   measures 0.0 degrees, correctly.
 * Wall thickness: a 10 mm cube measures **9.999999 mm**, and STL volume matches
   the exact solid volume to within 0.01%.
+* Assemblies: the three-part sample, one component of which is rotated 90
+  degrees, measures **60 x 40 x 28 mm** - the same as the kernel reports.
 
 ### Draft angle
 
@@ -269,6 +287,7 @@ run_analysis.bat            Analyse a part on Windows
 run_dashboard.bat           Start the dashboard on Windows
 dfx_analyzers/
   cad_reader.py             STEP and STL geometry extraction
+  step_assembly.py          Assembly component placement
   render.py                 Orthographic SVG views
   html_report.py            Printable HTML report
   dfm_analyzer.py           Manufacturability checks
@@ -284,8 +303,8 @@ scripts/
   convert_creo_to_step.py   Creo export helper
   generate_sample_parts.py  Regenerates example_parts (needs CadQuery)
 example_parts/              sample_bracket (STEP+STL), sample_housing
-                            (drafted), sample_assembly (2 parts)
-tests/                      96 tests
+                            (drafted), sample_assembly (3 placed parts)
+tests/                      109 tests
 docs/                       Installation, Creo integration, examples
 ```
 
@@ -298,7 +317,7 @@ python -m unittest discover -s tests     # no dependencies needed
 .venv/bin/python -m pytest tests/ -q     # same tests under pytest
 ```
 
-96 tests. The 17 web-dashboard tests skip automatically when Flask is not
+109 tests. The 17 web-dashboard tests skip automatically when Flask is not
 installed.
 
 ---
@@ -324,8 +343,8 @@ Honest list of what is *not* implemented yet:
 * Telling a hole from a boss or an external round. A STEP cylindrical face
   does not say which it is without full topology traversal, so they are
   reported together as "cylindrical features".
-* Applying assembly placement transforms, so an assembly's bounding box is
-  the union of untransformed component geometry. The report says so.
+* Per-component findings for an assembly: it is analysed as one body, so a
+  finding names the assembly rather than the component it came from.
 * Undercut and side-action detection for moulded parts.
 
 ---
